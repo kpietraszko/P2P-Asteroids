@@ -8,6 +8,7 @@
     "node-gyp": "^8.4.1"
   },
   "devDependencies": {
-    "@tsconfig/recommended": "^1.0.1"
+    "@tsconfig/recommended": "^1.0.1",
+    "@types/es6-promise": "^3.3.0"
   }
 }
