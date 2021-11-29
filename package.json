@@ -1,0 +1,13 @@
+{
+  "name": "AsteroidsJs",
+  "version": "1.0.0",
+  "dependencies": {
+    "@types/mainloop.js": "^1.0.5",
+    "gpu.js": "^2.11.4",
+    "mainloop.js": "^1.0.4",
+    "node-gyp": "^8.4.1"
+  },
+  "devDependencies": {
+    "@tsconfig/recommended": "^1.0.1"
+  }
+}
