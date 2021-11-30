@@ -42,9 +42,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 var gpu_js_1 = require("gpu.js");
 // @ts-ignore Rider's TS compiler works weird compared to Parcel's
 var MainLoop = require("mainloop.js");
-document.addEventListener("DOMContentLoaded", onDOMLoaded);
+window.addEventListener("load", onLoaded);
 var gpu = new gpu_js_1.GPU({ mode: "gpu" }); // for now CPU is like 2 times faster than GPU, because copying data to and from GPU is slow at this scale :(. 
-// TODO: implement second graphical kernel that draws straight to canvas and check performance
+// TODO: implement second graphical kernel that draws straight to canvas and check performance, but how
+// maybe 
 // returns x or y position of given particle, depending on given thread.x and thread.y
 // [fakeY, fakeX] for fake transformation of particles to 2D array. thread.z should be (XorY result)
 function velocityKernelFunction(particlesPositionsX, particlesPositionsY, // these should probably be Float32Array[]
@@ -58,21 +59,24 @@ particlesVelocitiesX, particlesVelocitiesY, particlesAlive) {
         return particlePositionX + particlesVelocitiesX[this.thread.y][this.thread.x];
     return particlePositionY + particlesVelocitiesY[this.thread.y][this.thread.x];
 }
-globalThis.velocityKernel = gpu.createKernel(velocityKernelFunction).setImmutable(true).setOutput([240, 320, 2]);
-function onDOMLoaded() {
+function onLoaded() {
+    // TODO: add class/interface to globalThis, that holds all these
     globalThis.canvas = document.getElementById("canvas"); // careful, this means canvas won't ever get GC'ed
     globalThis.fpsCounter = document.getElementById("fps");
     globalThis.particlesColumns = 320;
     globalThis.particlesRows = 200;
     globalThis.initialParticlesCount = globalThis.particlesColumns * globalThis.particlesRows;
     // (<IKernelRunShortcutBase>globalThis.velocityKernel).setOutput([globalThis.particlesColumns, globalThis.particlesRows, 2]);
-    globalThis.particleDisplaySize = 3;
-    globalThis.canvas.width = globalThis.particlesColumns * globalThis.particleDisplaySize;
-    globalThis.canvas.height = globalThis.particlesRows * globalThis.particleDisplaySize;
-    globalThis.ctx = globalThis.canvas.getContext("2d");
+    globalThis.canvas.width = globalThis.particlesColumns;
+    globalThis.canvas.height = globalThis.particlesRows;
+    globalThis.ctx = globalThis.canvas.getContext("2d", { alpha: false }); // 2d, webgl or webgl2?
     globalThis.ctx.imageSmoothingEnabled = false;
     globalThis.ctx.fillStyle = "black";
-    globalThis.particlesPositionsX = new Float32Array(globalThis.initialParticlesCount); // change those to Float32Array
+    globalThis.velocityKernel = gpu.createKernel(velocityKernelFunction)
+        .setLoopMaxIterations(320).setImmutable(true) // MaxIterations? immutable?
+        .setOutput([240, 320, 2]);
+    // .setPipeline(true);
+    globalThis.particlesPositionsX = new Float32Array(globalThis.initialParticlesCount); // TODO: those will actually be pools of particles
     globalThis.particlesPositionsY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesX = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesY = new Float32Array(globalThis.initialParticlesCount);
@@ -100,33 +104,49 @@ function update(delta) {
     // console.log("update");
     // note that arrays here are transformed to 2D but this has no relation to the actual positions of particles
     // it's just required to fit into kernel's textures
-    var result = globalThis.velocityKernel(new gpu_js_1.Input(globalThis.particlesPositionsX, [globalThis.particlesColumns, globalThis.particlesRows]), new gpu_js_1.Input(globalThis.particlesPositionsY, [globalThis.particlesColumns, globalThis.particlesRows]), new gpu_js_1.Input(globalThis.particlesVelocitiesX, [globalThis.particlesColumns, globalThis.particlesRows]), new gpu_js_1.Input(globalThis.particlesVelocitiesY, [globalThis.particlesColumns, globalThis.particlesRows]), new gpu_js_1.Input(globalThis.particlesAlive, [globalThis.particlesColumns, globalThis.particlesRows]));
-    // console.log(result);
-    for (var z = 0; z < result.length; z++) { // are these loops correct?
-        for (var y = 0; y < result[0].length; y++) {
-            for (var x = 0; x < result[0][0].length; x++) {
+    var prevVelocityResult = globalThis.velocityResult;
+    globalThis.velocityResult = globalThis.velocityKernel(new gpu_js_1.Input(globalThis.particlesPositionsX, [globalThis.particlesColumns, globalThis.particlesRows]), new gpu_js_1.Input(globalThis.particlesPositionsY, [globalThis.particlesColumns, globalThis.particlesRows]), new gpu_js_1.Input(globalThis.particlesVelocitiesX, [globalThis.particlesColumns, globalThis.particlesRows]), new gpu_js_1.Input(globalThis.particlesVelocitiesY, [globalThis.particlesColumns, globalThis.particlesRows]), new gpu_js_1.Input(globalThis.particlesAlive, [globalThis.particlesColumns, globalThis.particlesRows]));
+    // console.log(globalThis.velocityResult); // typeof result is GLTextureFloat3D or WebGLTexture because pipeline: true
+    // (<IKernelRunShortcutBase>globalThis.renderKernel)(globalThis.velocityResult, globalThis.velocityResult.dimensions[0], globalThis.velocityResult.dimensions[1]);
+    for (var z = 0; z < globalThis.velocityResult.length; z++) { // are these loops correct?
+        for (var y = 0; y < globalThis.velocityResult[0].length; y++) {
+            for (var x = 0; x < globalThis.velocityResult[0][0].length; x++) {
                 if (z == 0)
-                    globalThis.particlesPositionsX[y * globalThis.particlesColumns + x] = result[z][y][x];
+                    globalThis.particlesPositionsX[y * globalThis.particlesColumns + x] = globalThis.velocityResult[z][y][x];
                 else if (z == 1)
-                    globalThis.particlesPositionsY[y * globalThis.particlesColumns + x] = result[z][y][x];
+                    globalThis.particlesPositionsY[y * globalThis.particlesColumns + x] = globalThis.velocityResult[z][y][x];
             }
         }
     }
-    // result.delete();
+    deleteTexture(prevVelocityResult);
     // console.log(result as [number, number, number]);
 }
 function draw(interpolationPercentage) {
-    // for (let y = 0; y < globalThis.particlesRows; y++) {
-    //     for (let x = 0; x < globalThis.particlesColumns; x++) {
-    //        
-    //     }
-    // }
-    globalThis.ctx.clearRect(0, 0, globalThis.canvas.width, globalThis.canvas.height);
+    var width = globalThis.canvas.width;
+    var height = globalThis.canvas.height;
+    var imageData = globalThis.ctx.createImageData(width, height);
+    for (var i = 0; i < imageData.data.length; i += 4) {
+        imageData.data[i + 0] = 255; // R value
+        imageData.data[i + 1] = 255; // G value
+        imageData.data[i + 2] = 255; // B value
+        imageData.data[i + 3] = 255; // A value
+    }
     for (var i = 0; i < globalThis.particlesPositionsX.length; i++) {
         if (!globalThis.particlesAlive[i])
             continue;
-        globalThis.ctx.fillRect(Math.round(globalThis.particlesPositionsX[i]) * globalThis.particleDisplaySize, Math.round(globalThis.particlesPositionsY[i]) * globalThis.particleDisplaySize, globalThis.particleDisplaySize, globalThis.particleDisplaySize);
+        var x = Math.round(globalThis.particlesPositionsX[i]);
+        var y = Math.round(globalThis.particlesPositionsY[i]);
+        if (x < 0 || x >= width || y < 0 || y >= height)
+            continue;
+        // console.log("x: " + x);
+        // console.log("y: " + y);
+        var offset = (y * width + x) * 4; // because rgba, maybe 3 because I disabled alpha?
+        imageData.data[offset] = 0;
+        imageData.data[offset + 1] = 0;
+        imageData.data[offset + 2] = 0;
+        // imageData.data[offset + 3] = 255;
     }
+    globalThis.ctx.putImageData(imageData, 0, 0);
 }
 function end(fps, panic) {
     globalThis.fpsCounter.textContent = Math.round(fps) + ' FPS';
@@ -142,6 +162,11 @@ function end(fps, panic) {
 }
 function isPointInCircle(x, y, centerX, centerY, radius) {
     return (x - centerX) * (x - centerX) + (y - centerY) * (y - centerY) < (radius + 0.5) * (radius + 0.5); // 0.25 or 0.5 or 0.7071?
+}
+function deleteTexture(texture) {
+    if (texture && texture.delete) {
+        texture.delete();
+    }
 }
 function sleep(msec) {
     return __awaiter(this, void 0, void 0, function () {

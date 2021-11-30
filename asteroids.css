@@ -1,3 +1,6 @@
 ﻿#canvas{
     border: 1px solid black;
+    image-rendering: pixelated;
+    width: calc(320px * 4);
+    height: calc(200px * 4);
 }
