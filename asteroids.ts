@@ -9,13 +9,13 @@ import MainLoop = require("mainloop.js");
 
 window.addEventListener("load", onLoaded);
 
-const gpu = new GPU({mode: "gpu"}); // for now CPU is like 2 times faster than GPU, because copying data to and from GPU is slow at this scale :(. 
-// TODO: implement second graphical kernel that draws straight to canvas and check performance, but how
-// maybe 
+const gpu = new GPU({mode: "gpu"}); // for now CPU is like 2 times faster than GPU, because copying data to and from GPU is slow at this scale :(. On Poco F1 CPU also faster 
+// options: give up on GPU; find a way to "rasterize" the awkward 3D array in a kernel (but I still need the data back, to send it to player 2)
+// BUT TODO: first implement more logic for particles (collisions etc) and compare gpu to cpu again
 
 // returns x or y position of given particle, depending on given thread.x and thread.y
 // [fakeY, fakeX] for fake transformation of particles to 2D array. thread.z should be (XorY result)
-function velocityKernelFunction(this: IKernelFunctionThis, particlesPositionsX: Float32Array[], particlesPositionsY: Float32Array[], // these should probably be Float32Array[]
+function velocityKernelFunction(this: IKernelFunctionThis, particlesPositionsX: Float32Array[], particlesPositionsY: Float32Array[],
                                 particlesVelocitiesX: Float32Array[], particlesVelocitiesY: Float32Array[], particlesAlive: Float32Array[]): number // 2.4ms on GPU
 {
     if (particlesAlive[this.thread.y][this.thread.x] == 0) // 0 is dead, 1 is alive
@@ -46,9 +46,11 @@ function onLoaded() {
     globalThis.ctx.fillStyle = "black";
 
     globalThis.velocityKernel = gpu.createKernel<typeof velocityKernelFunction>(velocityKernelFunction)
-        .setLoopMaxIterations(320).setImmutable(true) // MaxIterations? immutable?
+        .setLoopMaxIterations(320).setImmutable(true).setOptimizeFloatMemory(true)// MaxIterations? immutable?
         .setOutput([240, 320, 2])
-        // .setPipeline(true);
+        // .setPipeline(true)
+        // .setPrecision("unsigned");
+    
 
     globalThis.particlesPositionsX = new Float32Array(globalThis.initialParticlesCount); // TODO: those will actually be pools of particles
     globalThis.particlesPositionsY = new Float32Array(globalThis.initialParticlesCount);
@@ -65,14 +67,15 @@ function onLoaded() {
         let y = Math.floor(i / globalThis.particlesColumns);
         globalThis.particlesPositionsX[i] = x;
         globalThis.particlesPositionsY[i] = y;
-
-        // USE MAINLOOP.JS
+        
         if (isPointInCircle(x, y, planetCenterX, planetCenterY, planetRadius)) {
             globalThis.particlesAlive[i] = true;
             globalThis.particlesVelocitiesX[i] = 1.0;
         }
 
     }
+    
+    // await sleep(1000);
 
     // Problem, intentionally MainLoop is often called twice in a frame, that's not really acceptable, copying to gpu, from gpu, to gpu and from gpu
     // Don't pass anything to setMaxAllowedFPS to prevent that. 
@@ -92,9 +95,9 @@ function update(delta: Number): void {
         new Input(globalThis.particlesAlive, [globalThis.particlesColumns, globalThis.particlesRows])) as any;
 
     // console.log(globalThis.velocityResult); // typeof result is GLTextureFloat3D or WebGLTexture because pipeline: true
-
     // (<IKernelRunShortcutBase>globalThis.renderKernel)(globalThis.velocityResult, globalThis.velocityResult.dimensions[0], globalThis.velocityResult.dimensions[1]);
 
+    // skipping this and somehow rendering straight from kernel would be great, because readPixels (which reads from GPU) is slow
     for (let z = 0; z < globalThis.velocityResult.length; z++) { // are these loops correct?
         for (let y = 0; y < globalThis.velocityResult[0].length; y++) {
             for (let x = 0; x < globalThis.velocityResult[0][0].length; x++) {
