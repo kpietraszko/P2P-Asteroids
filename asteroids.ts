@@ -1,35 +1,8 @@
-﻿// import * as MainLoop from "mainloop.js";
-// import MainLoop = require("mainloop.js");
-
-// import * as MainLoop from "./node_modules/mainloop.js/build/mainloop.min.js";
-
-import {GPU, IKernelFunctionThis, IKernelRunShortcutBase, input, Input} from "gpu.js";
-// @ts-ignore Rider's TS compiler works weird compared to Parcel's
+﻿// @ts-ignore Rider's TS compiler works weird compared to Parcel's
 import MainLoop = require("mainloop.js");
 
 window.addEventListener("load", onLoaded);
 
-const gpu = new GPU({mode: "gpu"}); // for now CPU is like 2 times faster than GPU, because copying data to and from GPU is slow at this scale :(. On Poco F1 CPU also faster 
-// options: give up on GPU; find a way to "rasterize" the awkward 3D array in a kernel (but I still need the data back, to send it to player 2)
-// BUT TODO: first implement more logic for particles (collisions etc) and compare gpu to cpu again
-
-// returns x or y position of given particle, depending on given thread.x and thread.y
-// [fakeY, fakeX] for fake transformation of particles to 2D array. thread.z should be (XorY result)
-function velocityKernelFunction(this: IKernelFunctionThis, particlesPositionsX: Float32Array[], particlesPositionsY: Float32Array[],
-                                particlesVelocitiesX: Float32Array[], particlesVelocitiesY: Float32Array[], particlesAlive: Float32Array[]): number // 2.4ms on GPU
-{
-    if (particlesAlive[this.thread.y][this.thread.x] == 0) // 0 is dead, 1 is alive
-        return 0;
-
-    const coordinate = this.thread.z;
-    const particlePositionX = particlesPositionsX[this.thread.y][this.thread.x];
-    const particlePositionY = particlesPositionsY[this.thread.y][this.thread.x];
-
-    if (coordinate == 0) // 0 means we want X, 1 means we want Y
-        return particlePositionX + particlesVelocitiesX[this.thread.y][this.thread.x];
-
-    return particlePositionY + particlesVelocitiesY[this.thread.y][this.thread.x];
-}
 
 function onLoaded() {
     // TODO: add class/interface to globalThis, that holds all these
@@ -38,44 +11,40 @@ function onLoaded() {
     globalThis.particlesColumns = 320 as number;
     globalThis.particlesRows = 200 as number;
     globalThis.initialParticlesCount = globalThis.particlesColumns * globalThis.particlesRows;
-    // (<IKernelRunShortcutBase>globalThis.velocityKernel).setOutput([globalThis.particlesColumns, globalThis.particlesRows, 2]);
     globalThis.canvas.width = globalThis.particlesColumns;
     globalThis.canvas.height = globalThis.particlesRows;
-    globalThis.ctx = (<HTMLCanvasElement>globalThis.canvas).getContext("2d", { alpha: false }); // 2d, webgl or webgl2?
+    globalThis.ctx = (<HTMLCanvasElement>globalThis.canvas).getContext("2d", { alpha: false });
     globalThis.ctx.imageSmoothingEnabled = false;
     globalThis.ctx.fillStyle = "black";
-
-    globalThis.velocityKernel = gpu.createKernel<typeof velocityKernelFunction>(velocityKernelFunction)
-        .setLoopMaxIterations(320).setImmutable(true).setOptimizeFloatMemory(true)// MaxIterations? immutable?
-        .setOutput([240, 320, 2])
-        // .setPipeline(true)
-        // .setPrecision("unsigned");
     
 
     globalThis.particlesPositionsX = new Float32Array(globalThis.initialParticlesCount); // TODO: those will actually be pools of particles
     globalThis.particlesPositionsY = new Float32Array(globalThis.initialParticlesCount);
+    globalThis.particlesNewPositionsX = new Float32Array(globalThis.initialParticlesCount); 
+    globalThis.particlesNewPositionsY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesX = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesY = new Float32Array(globalThis.initialParticlesCount);
-    globalThis.particlesAlive = new Float32Array(globalThis.initialParticlesCount); // 0 is dead, 1 is alive (gpu.js doesn't take boolean[] as input)
+    globalThis.particlesAlive = new Array<boolean>(globalThis.initialParticlesCount).fill(false); 
 
-    const planetCenterX: number = 50;
+    const planetCenterX: number = 200;
     const planetCenterY: number = 100;
     const planetRadius: number = 40;
 
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         let x = Math.floor(i % globalThis.particlesColumns); // why floor?
         let y = Math.floor(i / globalThis.particlesColumns);
-        globalThis.particlesPositionsX[i] = x;
-        globalThis.particlesPositionsY[i] = y;
         
         if (isPointInCircle(x, y, planetCenterX, planetCenterY, planetRadius)) {
             globalThis.particlesAlive[i] = true;
-            globalThis.particlesVelocitiesX[i] = 1.0;
+            // globalThis.particlesVelocitiesX[i] = 1.0;
+            globalThis.particlesPositionsX[i] = x;
+            globalThis.particlesPositionsY[i] = y;
         }
 
     }
     
     // await sleep(1000);
+    globalThis.tick = 1;
 
     // Problem, intentionally MainLoop is often called twice in a frame, that's not really acceptable, copying to gpu, from gpu, to gpu and from gpu
     // Don't pass anything to setMaxAllowedFPS to prevent that. 
@@ -84,39 +53,34 @@ function onLoaded() {
 }
 
 function update(delta: Number): void {
-    // console.log("update");
-    // note that arrays here are transformed to 2D but this has no relation to the actual positions of particles
-    // it's just required to fit into kernel's textures
-    const prevVelocityResult = globalThis.velocityResult;
-    globalThis.velocityResult = (<IKernelRunShortcutBase>globalThis.velocityKernel)(new Input(globalThis.particlesPositionsX, [globalThis.particlesColumns, globalThis.particlesRows]),
-        new Input(globalThis.particlesPositionsY, [globalThis.particlesColumns, globalThis.particlesRows]),
-        new Input(globalThis.particlesVelocitiesX, [globalThis.particlesColumns, globalThis.particlesRows]),
-        new Input(globalThis.particlesVelocitiesY, [globalThis.particlesColumns, globalThis.particlesRows]),
-        new Input(globalThis.particlesAlive, [globalThis.particlesColumns, globalThis.particlesRows])) as any;
-
-    // console.log(globalThis.velocityResult); // typeof result is GLTextureFloat3D or WebGLTexture because pipeline: true
-    // (<IKernelRunShortcutBase>globalThis.renderKernel)(globalThis.velocityResult, globalThis.velocityResult.dimensions[0], globalThis.velocityResult.dimensions[1]);
-
-    // skipping this and somehow rendering straight from kernel would be great, because readPixels (which reads from GPU) is slow
-    for (let z = 0; z < globalThis.velocityResult.length; z++) { // are these loops correct?
-        for (let y = 0; y < globalThis.velocityResult[0].length; y++) {
-            for (let x = 0; x < globalThis.velocityResult[0][0].length; x++) {
-                if (z == 0)
-                    globalThis.particlesPositionsX[y * globalThis.particlesColumns + x] = globalThis.velocityResult[z][y][x];
-                else if (z == 1)
-                    globalThis.particlesPositionsY[y * globalThis.particlesColumns + x] = globalThis.velocityResult[z][y][x];
-            }
-
-        }
+    // apply velocity
+    for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+        // if (!globalThis.particlesAlive[i]) {
+        //     continue;
+        // }
+        let newX = globalThis.particlesPositionsX[i] + globalThis.particlesVelocitiesX[i];
+        let newY = globalThis.particlesPositionsY[i] + globalThis.particlesVelocitiesY[i];
+        globalThis.particlesNewPositionsX[i] = newX;
+        globalThis.particlesNewPositionsY[i] = newY;
     }
 
-    deleteTexture(prevVelocityResult);
+    if (globalThis.tick == 1){
+            spawnAsteroid(34, 170, 20, 1, -0.3);
+    }
 
-    // console.log(result as [number, number, number]);
+    // apply new positions to positions arrays, and clear newPositions arrays
+    for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+        globalThis.particlesPositionsX[i] = globalThis.particlesNewPositionsX[i].valueOf();
+        globalThis.particlesPositionsY[i] = globalThis.particlesNewPositionsY[i].valueOf();
+        globalThis.particlesNewPositionsX[i] = 0;
+        globalThis.particlesNewPositionsY[i] = 0;
+    }
+
+    globalThis.tick++;
 }
 
 function draw(interpolationPercentage: number) { // with fillRect takes ~3 ms, with setImageData takes ~0.5 ms on my PC :)
-    
+    // console.log("alive: " +globalThis.particlesAlive.filter(x => x == true).length);
     const width = globalThis.canvas.width;
     const height = globalThis.canvas.height;
     let imageData = globalThis.ctx.createImageData(width, height);
@@ -129,7 +93,7 @@ function draw(interpolationPercentage: number) { // with fillRect takes ~3 ms, w
     }
 
 
-    for (let i = 0; i < globalThis.particlesPositionsX.length; i++) {
+    for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         if (!globalThis.particlesAlive[i])
             continue;
 
@@ -168,9 +132,39 @@ function isPointInCircle(x: number, y: number, centerX: number, centerY: number,
     return (x - centerX) * (x - centerX) + (y - centerY) * (y - centerY) < (radius + 0.5) * (radius + 0.5); // 0.25 or 0.5 or 0.7071?
 }
 
-function deleteTexture(texture) {
-    if (texture && texture.delete) {
-        texture.delete();
+function spawnAsteroid(centerX : number, centerY : number, r : number, vx : number, vy : number) : void{
+    // TODO: how to make it work if positions are pools, find dead particles and use them, but I'd need to place them manually
+    const minX :number = centerX - r; // maybe also -0.5
+    const maxX :number = centerX + r + 1; // maybe also +0.5
+    const minY :number = centerY - r; // maybe also -0.5
+    const maxY :number = centerY + r + 1; // maybe also +0.5
+    const regionWidth = maxX - minX;
+    const regionHeight = maxY - minY;
+    let indexInRegionToCheck :number = 0;
+    
+    for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+        if (globalThis.particlesAlive[i])
+            continue; // this particle is already used for something
+        
+        let foundPixelForThisParticle :boolean = false;
+        while (!foundPixelForThisParticle && indexInRegionToCheck < regionWidth * regionHeight) {
+            let x = Math.floor(indexInRegionToCheck % regionWidth) + minX; // why floor? // regionHeight or regionWidth?
+            let y = Math.floor(indexInRegionToCheck / regionWidth) + minY;
+            if (isPointInCircle(x, y, centerX, centerY, r)) {
+                globalThis.particlesAlive[i] = true;
+                globalThis.particlesVelocitiesX[i] = vx;
+                globalThis.particlesVelocitiesY[i] = vy;
+                globalThis.particlesNewPositionsX[i] = x;
+                globalThis.particlesNewPositionsY[i] = y;
+                foundPixelForThisParticle = true
+                if (i == 0)
+                    console.log("index " + i + " at " + x + "; " + y);
+            }
+            indexInRegionToCheck++;
+        }
+        
+        if (indexInRegionToCheck >= regionWidth * regionHeight)
+            break;
     }
 }
 
