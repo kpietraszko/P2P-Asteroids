@@ -11,46 +11,121 @@ function onLoaded() {
     globalThis.ctx = globalThis.canvas.getContext("2d", { alpha: false });
     globalThis.ctx.imageSmoothingEnabled = false;
     globalThis.ctx.fillStyle = "black";
-    globalThis.particlesPositionsX = new Float32Array(globalThis.initialParticlesCount); // TODO: those will actually be pools of particles
+    let isMobile = window.matchMedia("only screen and (max-width: 480px)").matches;
+    screen.orientation.addEventListener('change', function (e) {
+        if (window.matchMedia("only screen and (max-height: 4200px)").matches && (screen.orientation.type === "landscape-primary" || screen.orientation.type === "landscape-secondary"))
+            document.documentElement.requestFullscreen();
+    });
+    globalThis.particlesPositionsX = new Float32Array(globalThis.initialParticlesCount); // TODO: those are pools of particles
     globalThis.particlesPositionsY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesNewPositionsX = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesNewPositionsY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesX = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesAlive = new Array(globalThis.initialParticlesCount).fill(false);
+    globalThis.rotationGroupAssignments = new Uint8Array(globalThis.initialParticlesCount).fill(0);
+    // max 4 particles per collision cell
+    globalThis.particleCollisionLookup = new Array(globalThis.particlesColumns * globalThis.particlesRows).fill(null).map(i => new Int32Array(4));
+    globalThis.particleCollisionLookup.forEach(cell => cell.fill(-1));
+    globalThis.collisionLookupCountAtCell = new Uint8Array(globalThis.initialParticlesCount);
     const planetCenterX = 200;
     const planetCenterY = 100;
     const planetRadius = 40;
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         let x = Math.floor(i % globalThis.particlesColumns); // why floor?
         let y = Math.floor(i / globalThis.particlesColumns);
-        if (isPointInCircle(x, y, planetCenterX, planetCenterY, planetRadius)) {
+        if (isPointInCircle(x, y, planetCenterX, planetCenterY, planetRadius) ||
+            (x > planetCenterX - 2 && x < planetCenterX + 2 && y > planetCenterY - planetRadius - 6 && y < planetCenterY)) {
             globalThis.particlesAlive[i] = true;
             // globalThis.particlesVelocitiesX[i] = 1.0;
             globalThis.particlesPositionsX[i] = x;
             globalThis.particlesPositionsY[i] = y;
+            globalThis.rotationGroupAssignments[i] = 1;
         }
     }
     // await sleep(1000);
     globalThis.tick = 1;
-    // Problem, intentionally MainLoop is often called twice in a frame, that's not really acceptable, copying to gpu, from gpu, to gpu and from gpu
+    // Problem, intentionally MainLoop is often called twice in a frame
     // Don't pass anything to setMaxAllowedFPS to prevent that. 
     // Set SimulationTimestep to 1000/60 to update and draw 60 times per second, or to 1000/30 to draw 60 times per second and update 30 times 
-    MainLoop.setUpdate(update).setDraw(draw).setEnd(end).setMaxAllowedFPS().setSimulationTimestep(1000.0 / 60).start();
+    // seems like update is still called multiple times per frame, possibly also spiral of death
+    // can't rely on requestAnimationFrame frame rate, any device can limit it to anything like 50, 30 
+    // which means update has to be called multiple times per frame
+    MainLoop.setUpdate(update).setDraw(draw).setEnd(end).setMaxAllowedFPS(60).setSimulationTimestep(1000.0 / 60).start();
 }
 function update(delta) {
-    // apply velocity
+    // rotation to velocity
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
-        // if (!globalThis.particlesAlive[i]) {
-        //     continue;
-        // }
+        if (!globalThis.particlesAlive[i])
+            continue;
+        if (globalThis.rotationGroupAssignments[i] === 0)
+            continue;
+        let x = globalThis.particlesPositionsX[i];
+        let y = globalThis.particlesPositionsY[i];
+        if (globalThis.rotationGroupAssignments[i] === 1) {
+            let pivotX = 200; // TODO: un-hardcode it
+            let pivotY = 100;
+            var angle = Math.atan2(y, x);
+            angle = 0.01;
+            let xr = (x - pivotX) * Math.cos(angle) - (y - pivotY) * Math.sin(angle) + pivotX;
+            let yr = (x - pivotX) * Math.sin(angle) + (y - pivotY) * Math.cos(angle) + pivotY;
+            globalThis.particlesVelocitiesX[i] = xr - x;
+            globalThis.particlesVelocitiesY[i] = yr - y;
+        }
+    }
+    // apply velocity and fill particle collision lookup
+    for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+        if (!globalThis.particlesAlive[i]) {
+            continue;
+        }
         let newX = globalThis.particlesPositionsX[i] + globalThis.particlesVelocitiesX[i];
         let newY = globalThis.particlesPositionsY[i] + globalThis.particlesVelocitiesY[i];
         globalThis.particlesNewPositionsX[i] = newX;
         globalThis.particlesNewPositionsY[i] = newY;
+        // TODO: change it to check if it was inside grid on previous tick and now isn't, then kill it
+        if (newX < 0 || newX >= globalThis.particlesColumns || newY < 0 || newY >= globalThis.particlesRows) {
+            globalThis.particlesAlive[i] = false;
+            continue;
+        }
+        let indexOfCollisionLookup = Math.round(newY) * globalThis.particlesColumns + Math.round(newX);
+        if (globalThis.collisionLookupCountAtCell[indexOfCollisionLookup] >= 4) {
+            continue; // collision cell is full
+        }
+        globalThis.particleCollisionLookup[indexOfCollisionLookup][globalThis.collisionLookupCountAtCell[indexOfCollisionLookup]] = i;
+        globalThis.collisionLookupCountAtCell[indexOfCollisionLookup]++;
+    }
+    // handle collisions
+    for (let i = 0; i < globalThis.particleCollisionLookup.length; i++) {
+        if (globalThis.collisionLookupCountAtCell[i] <= 1)
+            continue;
+        let particlesToCheck = globalThis.particleCollisionLookup[i];
+        let firstParticlesRotationGroup = globalThis.rotationGroupAssignments[particlesToCheck[0]];
+        let allParticlesSameRotationGroup = true;
+        for (let j = 1; j < globalThis.collisionLookupCountAtCell[i]; j++) {
+            if (globalThis.rotationGroupAssignments[particlesToCheck[j]] !== firstParticlesRotationGroup) {
+                allParticlesSameRotationGroup = false;
+                break;
+            }
+        }
+        if (allParticlesSameRotationGroup)
+            continue;
+        for (let j = 0; j < globalThis.collisionLookupCountAtCell[i]; j++) {
+            globalThis.particlesAlive[particlesToCheck[j]] = false;
+            // how to prevent a rotating planet from destroying itself over time?
+            // console.log("Killing particle " + particlesToCheck[j]);
+        }
+    }
+    // clean up collision lookup
+    for (let i = 0; i < globalThis.particleCollisionLookup.length; i++) {
+        for (let j = 0; j < globalThis.particleCollisionLookup[i].length; j++) {
+            globalThis.particleCollisionLookup[i][j] = -1; // is that right?
+        }
+        globalThis.collisionLookupCountAtCell[i] = 0;
     }
     if (globalThis.tick == 1) {
-        spawnAsteroid(34, 170, 20, 1, -0.3);
+        spawnAsteroid(42, 12, 11, 1, 0.4);
+        spawnAsteroid(42, 80, 16, 1, 0.1);
+        spawnAsteroid(42, 170, 20, 1, -0.2);
     }
     // apply new positions to positions arrays, and clear newPositions arrays
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {

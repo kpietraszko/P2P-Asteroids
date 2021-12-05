@@ -1,6 +1,25 @@
-﻿#canvas{
+﻿body{
+
+}
+
+#fps{
+    position: absolute;
+}
+
+#canvas{
     border: 1px solid black;
     image-rendering: pixelated;
-    width: calc(320px * 3);
-    height: calc(200px * 3);
+    /*width: calc(320px * 3);*/
+    /*height: calc(200px * 3);*/
+    /*aspect-ratio: 320/200;*/
+    width: 98vw;
+    height: calc(98vw * 200 / 320);
+    box-sizing: border-box;
+}
+/* 100 * 320/200 = 160 */
+@media (min-width: 160vh) {
+    #canvas {
+        height: 96vh;
+        width: calc(96vh * 320/200);
+    }
 }
