@@ -25,6 +25,10 @@ function onLoaded() {
     globalThis.particlesPositionsY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesNewPositionsX = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesNewPositionsY = new Float32Array(globalThis.initialParticlesCount);
+    globalThis.particlesPrevTickPositionsX = new Float32Array(globalThis.initialParticlesCount);
+    globalThis.particlesPrevTickPositionsY = new Float32Array(globalThis.initialParticlesCount);
+    globalThis.particlesPrevPrevTickPositionsX = new Float32Array(globalThis.initialParticlesCount);
+    globalThis.particlesPrevPrevTickPositionsY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesX = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesAlive = new Array<boolean>(globalThis.initialParticlesCount).fill(false);
@@ -63,7 +67,8 @@ function onLoaded() {
     // seems like update is still called multiple times per frame, possibly also spiral of death
     // can't rely on requestAnimationFrame frame rate, any device can limit it to anything like 50, 30 
     // which means update has to be called multiple times per frame
-    MainLoop.setUpdate(update).setDraw(draw).setEnd(end).setMaxAllowedFPS(60).setSimulationTimestep(1000.0 / 60).start();
+    const kindaTargetFPs = 30;
+    MainLoop.setUpdate(update).setDraw(draw).setEnd(end).setMaxAllowedFPS(kindaTargetFPs).setSimulationTimestep(1000.0 / kindaTargetFPs).start();
 }
 
 function update(delta: Number): void {
@@ -82,7 +87,7 @@ function update(delta: Number): void {
             let pivotX = 200; // TODO: un-hardcode it
             let pivotY = 100;
             var angle = Math.atan2(y, x);
-            angle = 0.01;
+            angle = 0.05;
             let xr = (x - pivotX) * Math.cos(angle) - (y - pivotY) * Math.sin(angle)   + pivotX;
             let yr = (x - pivotX) * Math.sin(angle) + (y - pivotY) * Math.cos(angle)   + pivotY;
             globalThis.particlesVelocitiesX[i] = xr - x;
@@ -156,8 +161,12 @@ function update(delta: Number): void {
         spawnAsteroid(42, 170, 20, 1, -0.2);
     }
 
-    // apply new positions to positions arrays, and clear newPositions arrays
+    // apply new positions to positions arrays, and clear newPositions arrays; also store prevTickPositions
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+        globalThis.particlesPrevPrevTickPositionsX[i] = globalThis.particlesPrevTickPositionsX[i].valueOf();
+        globalThis.particlesPrevPrevTickPositionsY[i] = globalThis.particlesPrevTickPositionsY[i].valueOf();
+        globalThis.particlesPrevTickPositionsX[i] = globalThis.particlesPositionsX[i].valueOf();
+        globalThis.particlesPrevTickPositionsY[i] = globalThis.particlesPositionsY[i].valueOf();
         globalThis.particlesPositionsX[i] = globalThis.particlesNewPositionsX[i].valueOf();
         globalThis.particlesPositionsY[i] = globalThis.particlesNewPositionsY[i].valueOf();
         globalThis.particlesNewPositionsX[i] = 0;
@@ -180,7 +189,45 @@ function draw(interpolationPercentage: number) { // with fillRect takes ~3 ms, w
         imageData.data[i + 3] = 255;  // A value
     }
 
+    // draw previous-previous tick's positions grey
+    for (let i = 0; i < globalThis.initialParticlesCount; i++){
+        if (!globalThis.particlesAlive[i])
+            continue;
 
+        let x = Math.round(globalThis.particlesPrevPrevTickPositionsX[i]);
+        let y = Math.round(globalThis.particlesPrevPrevTickPositionsY[i]);
+
+        if (x < 0 || x >= width || y < 0 || y >= height)
+            continue;
+        // console.log("x: " + x);
+        // console.log("y: " + y);
+        let offset = (y * width + x) * 4; // because rgba, maybe 3 because I disabled alpha?
+
+        imageData.data[offset] = 30;
+        imageData.data[offset + 1] = 30;
+        imageData.data[offset + 2] = 30;
+    }
+    
+    // draw previous tick's positions grey
+    for (let i = 0; i < globalThis.initialParticlesCount; i++){
+        if (!globalThis.particlesAlive[i])
+            continue;
+
+        let x = Math.round(globalThis.particlesPrevTickPositionsX[i]);
+        let y = Math.round(globalThis.particlesPrevTickPositionsY[i]);
+
+        if (x < 0 || x >= width || y < 0 || y >= height)
+            continue;
+        // console.log("x: " + x);
+        // console.log("y: " + y);
+        let offset = (y * width + x) * 4; // because rgba, maybe 3 because I disabled alpha?
+
+        imageData.data[offset] = 20;
+        imageData.data[offset + 1] = 20;
+        imageData.data[offset + 2] = 20;
+    }
+
+    // draw current tick's positions black
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         if (!globalThis.particlesAlive[i])
             continue;
