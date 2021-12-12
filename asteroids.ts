@@ -16,6 +16,9 @@ function onLoaded() {
     globalThis.ctx = (<HTMLCanvasElement>globalThis.canvas).getContext("2d", {alpha: false});
     globalThis.ctx.imageSmoothingEnabled = false;
     globalThis.ctx.fillStyle = "black";
+    
+    globalThis.canvas.onpointerdown = onPointerDown;
+    
     let isMobile = window.matchMedia("only screen and (max-width: 480px)").matches;
     screen.orientation.addEventListener('change', function(e) { 
         if (window.matchMedia("only screen and (max-height: 4200px)").matches && (screen.orientation.type === "landscape-primary" || screen.orientation.type === "landscape-secondary"))
@@ -25,14 +28,11 @@ function onLoaded() {
     globalThis.particlesPositionsY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesNewPositionsX = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesNewPositionsY = new Float32Array(globalThis.initialParticlesCount);
-    globalThis.particlesPrevTickPositionsX = new Float32Array(globalThis.initialParticlesCount);
-    globalThis.particlesPrevTickPositionsY = new Float32Array(globalThis.initialParticlesCount);
-    globalThis.particlesPrevPrevTickPositionsX = new Float32Array(globalThis.initialParticlesCount);
-    globalThis.particlesPrevPrevTickPositionsY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesX = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesVelocitiesY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesAlive = new Array<boolean>(globalThis.initialParticlesCount).fill(false);
     globalThis.rotationGroupAssignments = new Uint8Array(globalThis.initialParticlesCount).fill(0);
+    globalThis.player1ShootOriginParticle = -1;
 
     // max 4 particles per collision cell
     globalThis.particleCollisionLookup = new Array<Int32Array>(globalThis.particlesColumns * globalThis.particlesRows).fill(null).map(i => new Int32Array(4));
@@ -54,12 +54,17 @@ function onLoaded() {
             globalThis.particlesPositionsX[i] = x;
             globalThis.particlesPositionsY[i] = y;
             globalThis.rotationGroupAssignments[i] = 1;
+            if (x === planetCenterX && y === planetCenterY - planetRadius - 5) {
+                globalThis.player1ShootOriginParticle = i;
+                console.log("player1ShootOriginParticle: " + x + " " + y);
+            }
         }
 
     }
 
     // await sleep(1000);
     globalThis.tick = 1;
+    // warm up (maybe)
 
     // Problem, intentionally MainLoop is often called twice in a frame
     // Don't pass anything to setMaxAllowedFPS to prevent that. 
@@ -67,11 +72,41 @@ function onLoaded() {
     // seems like update is still called multiple times per frame, possibly also spiral of death
     // can't rely on requestAnimationFrame frame rate, any device can limit it to anything like 50, 30 
     // which means update has to be called multiple times per frame
-    const kindaTargetFPs = 30;
-    MainLoop.setUpdate(update).setDraw(draw).setEnd(end).setMaxAllowedFPS(kindaTargetFPs).setSimulationTimestep(1000.0 / kindaTargetFPs).start();
+    const kindaTargetFPS = 60;
+    MainLoop.setUpdate(update).setDraw(draw).setEnd(end).setMaxAllowedFPS(kindaTargetFPS).setSimulationTimestep(1000.0 / kindaTargetFPS).start();
 }
 
 function update(delta: Number): void {
+    // shoot
+    if (globalThis.clickNotYetHandled){
+        // find dead particle(s) in pool, give it velocity according to click position
+        for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+            if (globalThis.particlesAlive[i])
+                continue; // this particle is already used for something
+            
+            let shootOriginX = globalThis.particlesPositionsX[globalThis.player1ShootOriginParticle];
+            let shootOriginY = globalThis.particlesPositionsY[globalThis.player1ShootOriginParticle];
+            if (shootOriginX === 0 && shootOriginY === 0) {
+                break; // shoot origin particle is dead or something, can't shoot
+            }
+
+            globalThis.particlesAlive[i] = true;
+            console.log("shootOriginX: " + shootOriginX + " shootOriginY: " + shootOriginY);
+            let velocityX = globalThis.pointerClickX - shootOriginX;
+            let velocityY = globalThis.pointerClickY - shootOriginY;
+            let velocityMagnitude = length(velocityX, velocityY);
+            velocityX = velocityX / velocityMagnitude; // normalized
+            velocityY = velocityY / velocityMagnitude; // normalized
+            globalThis.particlesVelocitiesX[i] = velocityX;
+            globalThis.particlesVelocitiesY[i] = velocityY;
+            
+            globalThis.particlesPositionsX[i] = shootOriginX + velocityX;
+            globalThis.particlesPositionsY[i] = shootOriginY + velocityY;
+            break;
+        }
+        globalThis.clickNotYetHandled = false;
+    }
+    
     // rotation to velocity
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         if (!globalThis.particlesAlive[i])
@@ -87,7 +122,7 @@ function update(delta: Number): void {
             let pivotX = 200; // TODO: un-hardcode it
             let pivotY = 100;
             var angle = Math.atan2(y, x);
-            angle = 0.05;
+            angle = 0.04;
             let xr = (x - pivotX) * Math.cos(angle) - (y - pivotY) * Math.sin(angle)   + pivotX;
             let yr = (x - pivotX) * Math.sin(angle) + (y - pivotY) * Math.cos(angle)   + pivotY;
             globalThis.particlesVelocitiesX[i] = xr - x;
@@ -111,7 +146,7 @@ function update(delta: Number): void {
             continue;
         }
 
-        let indexOfCollisionLookup = Math.round(newY) * globalThis.particlesColumns + Math.round(newX);
+        let indexOfCollisionLookup = Math.floor(newY) * globalThis.particlesColumns + Math.round(newX);
         if (globalThis.collisionLookupCountAtCell[indexOfCollisionLookup] >= 4) {
             continue; // collision cell is full
         }
@@ -129,15 +164,18 @@ function update(delta: Number): void {
         let firstParticlesRotationGroup = globalThis.rotationGroupAssignments[particlesToCheck[0]];
         let allParticlesSameRotationGroup = true;
 
-        for (let j = 1; j < globalThis.collisionLookupCountAtCell[i]; j++) {
-            if (globalThis.rotationGroupAssignments[particlesToCheck[j]] !== firstParticlesRotationGroup) {
-                allParticlesSameRotationGroup = false;
-                break;
+        if (firstParticlesRotationGroup === 1) // 1 is planet. workaround for now so that asteroids collide with each other
+        {
+            for (let j = 1; j < globalThis.collisionLookupCountAtCell[i]; j++) {
+                if (globalThis.rotationGroupAssignments[particlesToCheck[j]] !== firstParticlesRotationGroup) {
+                    allParticlesSameRotationGroup = false;
+                    break; // BUG: disables collisions between asteroids
+                }
             }
+
+            if (allParticlesSameRotationGroup)
+                continue;
         }
-        
-        if (allParticlesSameRotationGroup)
-            continue;
 
         for (let j = 0; j < globalThis.collisionLookupCountAtCell[i]; j++) {
             globalThis.particlesAlive[particlesToCheck[j]] = false;
@@ -156,17 +194,13 @@ function update(delta: Number): void {
 
 
     if (globalThis.tick == 1) {
-        spawnAsteroid(42, 12, 11, 1, 0.4);
-        spawnAsteroid(42, 80, 16, 1, 0.1);
-        spawnAsteroid(42, 170, 20, 1, -0.2);
+        // spawnAsteroid(42, 12, 11, 1, 0.4);
+        // spawnAsteroid(42, 80, 16, 1, 0.1);
+        // spawnAsteroid(42, 170, 20, 1, -0.2);
     }
 
     // apply new positions to positions arrays, and clear newPositions arrays; also store prevTickPositions
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
-        globalThis.particlesPrevPrevTickPositionsX[i] = globalThis.particlesPrevTickPositionsX[i].valueOf();
-        globalThis.particlesPrevPrevTickPositionsY[i] = globalThis.particlesPrevTickPositionsY[i].valueOf();
-        globalThis.particlesPrevTickPositionsX[i] = globalThis.particlesPositionsX[i].valueOf();
-        globalThis.particlesPrevTickPositionsY[i] = globalThis.particlesPositionsY[i].valueOf();
         globalThis.particlesPositionsX[i] = globalThis.particlesNewPositionsX[i].valueOf();
         globalThis.particlesPositionsY[i] = globalThis.particlesNewPositionsY[i].valueOf();
         globalThis.particlesNewPositionsX[i] = 0;
@@ -188,43 +222,52 @@ function draw(interpolationPercentage: number) { // with fillRect takes ~3 ms, w
         imageData.data[i + 2] = 255;  // B value
         imageData.data[i + 3] = 255;  // A value
     }
-
-    // draw previous-previous tick's positions grey
-    for (let i = 0; i < globalThis.initialParticlesCount; i++){
-        if (!globalThis.particlesAlive[i])
-            continue;
-
-        let x = Math.round(globalThis.particlesPrevPrevTickPositionsX[i]);
-        let y = Math.round(globalThis.particlesPrevPrevTickPositionsY[i]);
-
-        if (x < 0 || x >= width || y < 0 || y >= height)
-            continue;
-        // console.log("x: " + x);
-        // console.log("y: " + y);
-        let offset = (y * width + x) * 4; // because rgba, maybe 3 because I disabled alpha?
-
-        imageData.data[offset] = 30;
-        imageData.data[offset + 1] = 30;
-        imageData.data[offset + 2] = 30;
-    }
     
-    // draw previous tick's positions grey
+    // draw a grey trail for every particle, consisting of 1-3 pixels behind the particle (so opposite of velocity)
+    // this will be slooow
     for (let i = 0; i < globalThis.initialParticlesCount; i++){
         if (!globalThis.particlesAlive[i])
             continue;
 
-        let x = Math.round(globalThis.particlesPrevTickPositionsX[i]);
-        let y = Math.round(globalThis.particlesPrevTickPositionsY[i]);
-
-        if (x < 0 || x >= width || y < 0 || y >= height)
+        if (globalThis.particlesVelocitiesX === 0 && globalThis.particlesVelocitiesY === 0)
+            continue
+        
+        if (globalThis.rotationGroupAssignments[i] !== 1) // only draw trails for planet
             continue;
-        // console.log("x: " + x);
-        // console.log("y: " + y);
-        let offset = (y * width + x) * 4; // because rgba, maybe 3 because I disabled alpha?
 
-        imageData.data[offset] = 20;
-        imageData.data[offset + 1] = 20;
-        imageData.data[offset + 2] = 20;
+        let velocityMagnitude = length(globalThis.particlesVelocitiesX[i], globalThis.particlesVelocitiesY[i]);
+        let velocityXNormalized = globalThis.particlesVelocitiesX[i] / velocityMagnitude;
+        let velocityYNormalized = globalThis.particlesVelocitiesY[i] / velocityMagnitude;
+
+        let particleXRounded = Math.round(globalThis.particlesPositionsX[i]);
+        let particleYRounded = Math.round(globalThis.particlesPositionsY[i]);
+
+        if (particleXRounded < 0 || particleXRounded >= width || particleYRounded < 0 || particleYRounded >= height)
+            continue;
+
+        // iterate over moore neighborhood, if dot product of that (pixel in relation to the particle, velocity) is < -0.1 draw grey
+        for (let x = -1; x <= 1; x++) {
+            for (let y = -1; y <= 1; y++) {
+                if (x == 0 && y == 0) 
+                    continue; // ignore the actual particle
+
+                let neighborAbsoluteX = particleXRounded + x;
+                let neighborAbsoluteY = particleYRounded + y;
+
+                if (neighborAbsoluteX < 0 || neighborAbsoluteX >= width || neighborAbsoluteY < 0 || neighborAbsoluteY >= height)
+                    continue;
+                
+                let neighborLength = length(x, y);
+
+                let dotProduct = (velocityXNormalized * (x / neighborLength)) + (velocityYNormalized * (y / neighborLength));
+                if (dotProduct < -0.4) {
+                    let offset = (neighborAbsoluteY * width + neighborAbsoluteX) * 4;
+                    imageData.data[offset + 0] = 0;
+                    imageData.data[offset + 1] = 0;
+                    imageData.data[offset + 2] = 0;
+                }
+            }
+        }
     }
 
     // draw current tick's positions black
@@ -251,7 +294,7 @@ function draw(interpolationPercentage: number) { // with fillRect takes ~3 ms, w
 }
 
 function end(fps: number, panic: boolean) {
-    globalThis.fpsCounter.textContent = Math.round(fps) + ' FPS';
+    // globalThis.fpsCounter.textContent = Math.round(fps) + ' FPS';
     if (panic) {
         // This pattern introduces non-deterministic behavior, but in this case
         // it's better than the alternative (the application would look like it
@@ -264,11 +307,10 @@ function end(fps: number, panic: boolean) {
 }
 
 function isPointInCircle(x: number, y: number, centerX: number, centerY: number, radius: number): boolean {
-    return (x - centerX) * (x - centerX) + (y - centerY) * (y - centerY) < (radius + 0.5) * (radius + 0.5); // 0.25 or 0.5 or 0.7071?
+    return (x - centerX) * (x - centerX) + (y - centerY) * (y - centerY) < (radius + 0.5) * (radius + 0.5);
 }
 
 function spawnAsteroid(centerX: number, centerY: number, r: number, vx: number, vy: number): void {
-    // TODO: how to make it work if positions are pools, find dead particles and use them, but I'd need to place them manually
     const minX: number = centerX - r; // maybe also -0.5
     const maxX: number = centerX + r + 1; // maybe also +0.5
     const minY: number = centerY - r; // maybe also -0.5
@@ -303,7 +345,22 @@ function spawnAsteroid(centerX: number, centerY: number, r: number, vx: number, 
     }
 }
 
+function length(x: number, y: number): number {
+    return Math.sqrt(x * x + y * y);
+}
+
 async function sleep(msec) {
     // @ts-ignore
     return new Promise(resolve => setTimeout(resolve, msec));
+}
+
+function onPointerDown(event: PointerEvent) {
+    // console.log("pointer down");
+    // includes canvas scale
+    const canvasWidth = (event.target as HTMLElement).offsetWidth;
+    const canvasHeight = (event.target as HTMLElement).offsetHeight;
+    console.log("pointer down at " + event.offsetX / canvasWidth + "; " + event.offsetY / canvasHeight);
+    globalThis.pointerClickX = event.offsetX / canvasWidth * globalThis.particlesColumns;
+    globalThis.pointerClickY = event.offsetY / canvasHeight * globalThis.particlesRows;
+    globalThis.clickNotYetHandled = true;
 }

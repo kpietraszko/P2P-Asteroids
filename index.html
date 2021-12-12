@@ -1,14 +1,18 @@
 ﻿<!DOCTYPE html>
 <html lang="en">
 <head>
-<!--    <script src="./node_modules/gpu.js/dist/gpu-browser.js"></script>-->
-<!--    <script src="./node_modules/mainloop.js/build/mainloop.min.js"></script>-->
-    <script type="module" src="asteroids.ts"></script>
+<!--    <script type="module" src="asteroids.ts"></script>-->
+    <script type="module">
+        import "./asteroids.ts";
+    </script>
     <meta charset="UTF-8">
     <title>Asteroids</title>
-    <link rel="stylesheet" href="asteroids.css">
+<!--    <link rel="stylesheet" href="asteroids.css">-->
+    <style>
+        @import "./asteroids.css";
+    </style>
 </head> 
-<body>
+<body>Chan
     <div id="fps"></div>
     <canvas id="canvas"></canvas>
 </body>
