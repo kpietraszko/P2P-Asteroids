@@ -162,13 +162,17 @@ function update(delta: Number): void {
         if (!globalThis.particlesAlive[i]) {
             continue;
         }
-        let newX = globalThis.particlesPositionsX[i] + globalThis.particlesVelocitiesX[i];
-        let newY = globalThis.particlesPositionsY[i] + globalThis.particlesVelocitiesY[i];
+        let prevX = globalThis.particlesPositionsX[i];
+        let prevY = globalThis.particlesPositionsY[i];
+        let newX = prevX + globalThis.particlesVelocitiesX[i];
+        let newY = prevY + globalThis.particlesVelocitiesY[i];
         globalThis.particlesNewPositionsX[i] = newX;
         globalThis.particlesNewPositionsY[i] = newY;
 
         // TODO: change it to check if it was inside grid on previous tick and now isn't, then kill it
-        if (newX < 0 || newX >= globalThis.particlesColumns || newY < 0 || newY >= globalThis.particlesRows) {
+        let newPosOutsideGrid = newX < 0 || newX >= globalThis.particlesColumns || newY < 0 || newY >= globalThis.particlesRows;
+        let prevPosOutsideGrid = prevX < 0 || prevX >= globalThis.particlesColumns || prevY < 0 || prevY >= globalThis.particlesRows;
+        if (!prevPosOutsideGrid && newPosOutsideGrid) {
             globalThis.particlesAlive[i] = false;
             continue;
         }
@@ -207,7 +211,7 @@ function update(delta: Number): void {
         for (let j = 0; j < globalThis.collisionLookupCountAtCell[i]; j++) {
             globalThis.particlesAlive[particlesToCheck[j]] = false;
             if (particlesToCheck[j] === globalThis.player1ShootOriginParticle) {
-                window.alert("DESTROYED SHOOT ORIGIN!");
+                // window.alert("YOU DIED");
                 console.log("Destroyed shoot origin! Probably because the planet (and so the 'cannon') rotated into the bullet it just shot.");
             }
             // console.log("Killing particle " + particlesToCheck[j]);
@@ -224,8 +228,8 @@ function update(delta: Number): void {
 
 
     if (globalThis.tick == 1) {
-        spawnAsteroid(42, 12, 11, 1, 0.4);
-        spawnAsteroid(42, 80, 16, 1, 0.1);
+        spawnAsteroid(0, 12, 11, 1/5, 0.4/5); // if speed is to low, the asteroid doesn't damage the planet for some reason
+        spawnAsteroid(0, 80, 16, 1/5, 0.1/5); // or does it, but does it so equally around the rim that I don't notice?
         // spawnAsteroid(42, 170, 20, 1, -0.2);
     }
 
