@@ -62,54 +62,6 @@ function onLoaded() {
     MainLoop.setUpdate(update).setDraw(draw).setEnd(end).setMaxAllowedFPS(kindaTargetFPS).setSimulationTimestep(1000.0 / kindaTargetFPS).start();
 }
 function update(delta) {
-    // shoot
-    if (globalThis.clickNotYetHandled) {
-        globalThis.clickNotYetHandled = false;
-        let shootOriginX = globalThis.particlesPositionsX[globalThis.player1ShootOriginParticle];
-        let shootOriginY = globalThis.particlesPositionsY[globalThis.player1ShootOriginParticle];
-        let originOk = true;
-        if (shootOriginX === 0 && shootOriginY === 0 || !globalThis.particlesAlive[globalThis.player1ShootOriginParticle]) {
-            console.log("shoot origin particle is dead or something, can't shoot");
-            originOk = false;
-        }
-        if (originOk) {
-            let shootOriginXRelToPlanetCenter = shootOriginX - globalThis.planetCenterX;
-            let shootOriginYRelToPlanetCenter = shootOriginY - globalThis.planetCenterY;
-            let shootOriginRelToPlanetCenterLength = length(shootOriginXRelToPlanetCenter, shootOriginYRelToPlanetCenter);
-            shootOriginXRelToPlanetCenter = shootOriginXRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
-            shootOriginYRelToPlanetCenter = shootOriginYRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
-            console.log("shootOriginX: " + shootOriginX + " shootOriginY: " + shootOriginY);
-            let velocityX = globalThis.pointerClickX - shootOriginX;
-            let velocityY = globalThis.pointerClickY - shootOriginY;
-            let velocityMagnitude = length(velocityX, velocityY);
-            velocityX = velocityX / velocityMagnitude; // normalized
-            velocityY = velocityY / velocityMagnitude; // normalized
-            let directionOk = true;
-            let dotProduct = (velocityX * shootOriginXRelToPlanetCenter) + (velocityY * shootOriginYRelToPlanetCenter);
-            if (dotProduct < -0.3) {
-                // trying to shoot into the planet, don't shoot
-                console.log("ABORT SHOT");
-                directionOk = false;
-            }
-            if (directionOk) {
-                // find dead particle(s) in pool, give it velocity according to click position
-                for (let i = 0; i < globalThis.initialParticlesCount; i++) {
-                    if (i === globalThis.initialParticlesCount - 1) {
-                        console.log("no dead particles in pool, can't shoot");
-                    }
-                    if (globalThis.particlesAlive[i])
-                        continue; // this particle is already used for something
-                    globalThis.particlesVelocitiesX[i] = velocityX;
-                    globalThis.particlesVelocitiesY[i] = velocityY;
-                    // offset the initial bullet position to avoid destroying shoot origin particle itself
-                    globalThis.particlesPositionsX[i] = shootOriginX + velocityX * 3;
-                    globalThis.particlesPositionsY[i] = shootOriginY + velocityY * 3;
-                    globalThis.particlesAlive[i] = true;
-                    break;
-                }
-            }
-        }
-    }
     // rotation to velocity
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         if (!globalThis.particlesAlive[i])
@@ -174,7 +126,8 @@ function update(delta) {
         for (let j = 0; j < globalThis.collisionLookupCountAtCell[i]; j++) {
             globalThis.particlesAlive[particlesToCheck[j]] = false;
             if (particlesToCheck[j] === globalThis.player1ShootOriginParticle) {
-                // window.alert("YOU DIED");
+                if (window.confirm("YOU DIED. Try again?"))
+                    window.location.reload();
                 console.log("Destroyed shoot origin! Probably because the planet (and so the 'cannon') rotated into the bullet it just shot.");
             }
             // console.log("Killing particle " + particlesToCheck[j]);
@@ -188,9 +141,64 @@ function update(delta) {
         globalThis.collisionLookupCountAtCell[i] = 0;
     }
     if (globalThis.tick == 1) {
-        spawnAsteroid(0, 12, 11, 1 / 5, 0.4 / 5); // if speed is to low, the asteroid doesn't damage the planet for some reason
-        spawnAsteroid(0, 80, 16, 1 / 5, 0.1 / 5); // or does it, but does it so equally around the rim that I don't notice?
-        // spawnAsteroid(42, 170, 20, 1, -0.2);
+        spawnBall(0, 12, 11, 1 / 5, 0.4 / 5); // if speed is to low, the asteroid doesn't damage the planet for some reason
+        spawnBall(0, 80, 16, 1 / 5, 0.1 / 5); // or does it, but does it so equally around the rim that I don't notice?
+        spawnBall(42, 170, 20, 1, -0.2);
+    }
+    // shoot
+    if (globalThis.clickNotYetHandled) {
+        globalThis.clickNotYetHandled = false;
+        let shootOriginX = globalThis.particlesPositionsX[globalThis.player1ShootOriginParticle];
+        let shootOriginY = globalThis.particlesPositionsY[globalThis.player1ShootOriginParticle];
+        let originOk = true;
+        if (shootOriginX === 0 && shootOriginY === 0 || !globalThis.particlesAlive[globalThis.player1ShootOriginParticle]) {
+            console.log("shoot origin particle is dead or something, can't shoot");
+            originOk = false;
+        }
+        if (originOk) {
+            let shootOriginXRelToPlanetCenter = shootOriginX - globalThis.planetCenterX;
+            let shootOriginYRelToPlanetCenter = shootOriginY - globalThis.planetCenterY;
+            let shootOriginRelToPlanetCenterLength = length(shootOriginXRelToPlanetCenter, shootOriginYRelToPlanetCenter);
+            shootOriginXRelToPlanetCenter = shootOriginXRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
+            shootOriginYRelToPlanetCenter = shootOriginYRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
+            console.log("shootOriginX: " + shootOriginX + " shootOriginY: " + shootOriginY);
+            let velocityX = globalThis.pointerClickX - shootOriginX;
+            let velocityY = globalThis.pointerClickY - shootOriginY;
+            let velocityMagnitude = length(velocityX, velocityY);
+            velocityX = velocityX / velocityMagnitude; // normalized
+            velocityY = velocityY / velocityMagnitude; // normalized
+            let directionOk = true;
+            let dotProduct = (velocityX * shootOriginXRelToPlanetCenter) + (velocityY * shootOriginYRelToPlanetCenter);
+            if (dotProduct < -0.1) {
+                // trying to shoot into the planet, don't shoot
+                console.log("ABORT SHOT");
+                directionOk = false;
+            }
+            if (directionOk) {
+                // find dead particle(s) in pool, give it velocity according to click position
+                // region single pixel bullet
+                /*for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+                    if (i === globalThis.initialParticlesCount - 1) {
+                        console.log("no dead particles in pool, can't shoot");
+                    }
+
+                    if (globalThis.particlesAlive[i])
+                        continue; // this particle is already used for something
+
+                    globalThis.particlesVelocitiesX[i] = velocityX;
+                    globalThis.particlesVelocitiesY[i] = velocityY;
+
+                    // offset the initial bullet position to avoid destroying shoot origin particle itself
+                    
+                    globalThis.particlesPositionsX[i] = shootOriginX + velocityX * 3;
+                    globalThis.particlesPositionsY[i] = shootOriginY + velocityY * 3;
+                    globalThis.particlesAlive[i] = true;
+                    break;
+                }*/
+                // endregion
+                spawnBall(shootOriginX + velocityX * 6, shootOriginY + velocityY * 6, 3, velocityX, velocityY);
+            }
+        }
     }
     // apply new positions to positions arrays, and clear newPositions arrays; also store prevTickPositions
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
@@ -281,7 +289,7 @@ function end(fps, panic) {
 function isPointInCircle(x, y, centerX, centerY, radius) {
     return (x - centerX) * (x - centerX) + (y - centerY) * (y - centerY) < (radius + 0.5) * (radius + 0.5);
 }
-function spawnAsteroid(centerX, centerY, r, vx, vy) {
+function spawnBall(centerX, centerY, r, vx, vy) {
     const minX = centerX - r; // maybe also -0.5
     const maxX = centerX + r + 1; // maybe also +0.5
     const minY = centerY - r; // maybe also -0.5
