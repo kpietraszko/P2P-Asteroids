@@ -1,0 +1,4 @@
+﻿Physics:
+- bounce on collision (instead of destroying) if at steep angle? More difficult than expected
+- explosions?
+- destruction power based on total mass of cluster, so that single particle doesn't kill you? Sounds difficult

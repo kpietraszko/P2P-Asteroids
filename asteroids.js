@@ -58,7 +58,7 @@ function onLoaded() {
     // seems like update is still called multiple times per frame, possibly also spiral of death
     // can't rely on requestAnimationFrame frame rate, any device can limit it to anything like 50, 30 
     // which means update has to be called multiple times per frame
-    const kindaTargetFPS = 60;
+    const kindaTargetFPS = 30;
     MainLoop.setUpdate(update).setDraw(draw).setEnd(end).setMaxAllowedFPS(kindaTargetFPS).setSimulationTimestep(1000.0 / kindaTargetFPS).start();
 }
 function update(delta) {
@@ -123,6 +123,26 @@ function update(delta) {
             if (allParticlesSameRotationGroup)
                 continue;
         }
+        // bouncing test, but only if 2 particles colliding
+        if (globalThis.collisionLookupCountAtCell[i] === 2) {
+            let vx1 = globalThis.particlesVelocitiesX[particlesToCheck[0]];
+            let vy1 = globalThis.particlesVelocitiesY[particlesToCheck[0]];
+            let normalLength = length(vx1, vy1);
+            let nx = vx1 / normalLength;
+            let ny = vy1 / normalLength;
+            let dx = globalThis.particlesVelocitiesX[particlesToCheck[1]];
+            let dy = globalThis.particlesVelocitiesY[particlesToCheck[1]];
+            let bouncedVx = dx - 2 * ((dx * nx) + (dy * ny)) * nx / 2;
+            let bouncedVy = dy - 2 * ((dx * nx) + (dy * ny)) * ny / 2;
+            globalThis.particlesAlive[particlesToCheck[0]] = false;
+            globalThis.particlesVelocitiesX[particlesToCheck[1]] = bouncedVx;
+            globalThis.particlesVelocitiesY[particlesToCheck[1]] = bouncedVy;
+            if (Math.abs(bouncedVx) < 0.3 && Math.abs(bouncedVy) < 0.3) {
+                // kill it too, if resulting bounce is too slow
+                globalThis.particlesAlive[particlesToCheck[1]] = false;
+            }
+            continue;
+        }
         for (let j = 0; j < globalThis.collisionLookupCountAtCell[i]; j++) {
             globalThis.particlesAlive[particlesToCheck[j]] = false;
             if (particlesToCheck[j] === globalThis.player1ShootOriginParticle) {
@@ -130,7 +150,6 @@ function update(delta) {
                     window.location.reload();
                 console.log("Destroyed shoot origin! Probably because the planet (and so the 'cannon') rotated into the bullet it just shot.");
             }
-            // console.log("Killing particle " + particlesToCheck[j]);
         }
     }
     // clean up collision lookup
