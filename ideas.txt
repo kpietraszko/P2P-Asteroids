@@ -2,3 +2,5 @@
 - bounce on collision (instead of destroying) if at steep angle? More difficult than expected
 - explosions?
 - destruction power based on total mass of cluster, so that single particle doesn't kill you? Sounds difficult
+
+If any of colliding is in rotation group 1 or any (but not all!) is bullet => destroy 1 or 2

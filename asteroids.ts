@@ -268,20 +268,25 @@ function update(delta: Number): void {
         let collisionPositionY = globalThis.particlesPositionsY[particlesToCheck[0]];
 
         let allCollidingAreBullets = globalThis.isBullet[particlesToCheck[0]];
+        let anyIsBullet = globalThis.isBullet[particlesToCheck[0]];
+        let anyIsPlanet = globalThis.rotationGroupAssignments[particlesToCheck[0]] === 1;
 
         for (let j = 1; j < globalThis.collisionLookupCountAtCell[i]; j++) {
-            if (globalThis.isBullet[particlesToCheck[j]] !== allCollidingAreBullets) {
+            if (globalThis.isBullet[particlesToCheck[j]])
+                anyIsBullet = true;
+            else 
                 allCollidingAreBullets = false;
-                break;
-            }
+            
+            if (globalThis.rotationGroupAssignments[particlesToCheck[j]] === 1)
+                anyIsPlanet = true;
         }
         
         // BUG: very bugged, asteroids disappear by themselves over time
-        if (!allCollidingAreBullets) { // bullets don't destroy bullets
+        if (anyIsPlanet || (anyIsBullet && !allCollidingAreBullets)) { // bullets don't destroy bullets
             // kill 1 or 2 from the cell
-            // globalThis.particlesAlive[particlesToCheck[0]] = false;
+            globalThis.particlesAlive[particlesToCheck[0]] = false;
             // // if (globalThis.tick % 2 == 0)
-            //     globalThis.particlesAlive[particlesToCheck[1]] = false;
+                globalThis.particlesAlive[particlesToCheck[1]] = false;
         }
 
         // check if player died
