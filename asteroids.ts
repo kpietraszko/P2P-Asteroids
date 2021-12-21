@@ -18,6 +18,8 @@ function onLoaded() {
     globalThis.ctx.fillStyle = "black";
 
     globalThis.canvas.onpointerdown = onPointerDown;
+    globalThis.canvas.onpointermove = onPointerMove;
+    globalThis.canvas.onpointerup = onPointerUp;
 
     let isMobile = window.matchMedia("only screen and (max-width: 480px)").matches;
     screen.orientation.addEventListener('change', function (e) {
@@ -33,6 +35,8 @@ function onLoaded() {
     globalThis.particlesVelocitiesY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesAlive = new Array<boolean>(globalThis.initialParticlesCount).fill(false);
     globalThis.rotationGroupAssignments = new Uint8Array(globalThis.initialParticlesCount).fill(0);
+    globalThis.isBullet = new Array<boolean>(globalThis.initialParticlesCount).fill(false);
+    globalThis.previousBulletId = 0;
     globalThis.player1ShootOriginParticle = -1;
     globalThis.player1LastShotTime = 0;
 
@@ -95,11 +99,9 @@ function shoot() {
         shootOriginYRelToPlanetCenter = shootOriginYRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
 
         console.log("shootOriginX: " + shootOriginX + " shootOriginY: " + shootOriginY);
-        let velocityX = globalThis.pointerClickX - shootOriginX;
-        let velocityY = globalThis.pointerClickY - shootOriginY;
-        let velocityMagnitude = length(velocityX, velocityY);
-        velocityX = velocityX / velocityMagnitude; // normalized
-        velocityY = velocityY / velocityMagnitude; // normalized
+        
+        let velocityX = globalThis.pointerX - shootOriginX;
+        let velocityY = globalThis.pointerY - shootOriginY;
 
         let directionOk = true;
         let dotProduct = (velocityX * shootOriginXRelToPlanetCenter) + (velocityY * shootOriginYRelToPlanetCenter);
@@ -131,14 +133,43 @@ function shoot() {
                 break;
             }*/
             // endregion
-            spawnBall(shootOriginX + velocityX * 6, shootOriginY + velocityY * 6, 3, velocityX, velocityY);
+            
+            // TODO: randomize direction a bit for every bullet
+            // TODO: clean up, how to extract this to functions?
+            let angle = getRandomInRange(-0.05, 0.05); // with radius 40 this should amount to linear velocity just below 1 (so slower than bullets)
+            velocityX = (velocityX) * Math.cos(angle) - velocityY * Math.sin(angle);
+            velocityY = (velocityX) * Math.sin(angle) + velocityY * Math.cos(angle);
+            let velocityMagnitude = length(velocityX, velocityY);
+            velocityX = velocityX / velocityMagnitude; // normalized
+            velocityY = velocityY / velocityMagnitude; // normalized
+            spawnSingle(shootOriginX + velocityX * 4, shootOriginY + velocityY * 4, velocityX, velocityY, true);
+            angle = getRandomInRange(-0.05, 0.05); // with radius 40 this should amount to linear velocity just below 1 (so slower than bullets)
+            velocityX = (velocityX) * Math.cos(angle) - velocityY * Math.sin(angle);
+            velocityY = (velocityX) * Math.sin(angle) + velocityY * Math.cos(angle);
+            velocityMagnitude = length(velocityX, velocityY);
+            velocityX = velocityX / velocityMagnitude; // normalized
+            velocityY = velocityY / velocityMagnitude; // normalized
+            spawnSingle(shootOriginX + velocityX * 4, shootOriginY + velocityY * 4, velocityX, velocityY, true);
+            angle = getRandomInRange(-0.05, 0.05); // with radius 40 this should amount to linear velocity just below 1 (so slower than bullets)
+            velocityX = (velocityX) * Math.cos(angle) - velocityY * Math.sin(angle);
+            velocityY = (velocityX) * Math.sin(angle) + velocityY * Math.cos(angle);
+            velocityMagnitude = length(velocityX, velocityY);
+            velocityX = velocityX / velocityMagnitude; // normalized
+            velocityY = velocityY / velocityMagnitude; // normalized
+            spawnSingle(shootOriginX + velocityX * 4, shootOriginY + velocityY * 4, velocityX, velocityY, true);
+            angle = getRandomInRange(-0.05, 0.05); // with radius 40 this should amount to linear velocity just below 1 (so slower than bullets)
+            velocityX = (velocityX) * Math.cos(angle) - velocityY * Math.sin(angle);
+            velocityY = (velocityX) * Math.sin(angle) + velocityY * Math.cos(angle);
+            velocityMagnitude = length(velocityX, velocityY);
+            velocityX = velocityX / velocityMagnitude; // normalized
+            velocityY = velocityY / velocityMagnitude; // normalized
+            spawnSingle(shootOriginX + velocityX * 4, shootOriginY + velocityY * 4, velocityX, velocityY, true);
         }
     }
 }
 
 function update(delta: Number): void {
-    
-
+    let frameStartTimestamp = performance.now();
     // rotation to velocity
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         if (!globalThis.particlesAlive[i])
@@ -181,7 +212,7 @@ function update(delta: Number): void {
             continue;
         }
 
-        let indexOfCollisionLookup = Math.floor(newY) * globalThis.particlesColumns + Math.round(newX);
+        let indexOfCollisionLookup = Math.floor(newY) * globalThis.particlesColumns + Math.floor(newX);
         if (globalThis.collisionLookupCountAtCell[indexOfCollisionLookup] >= 4) {
             continue; // collision cell is full
         }
@@ -211,9 +242,9 @@ function update(delta: Number): void {
             if (allParticlesSameRotationGroup)
                 continue;
         }
-        
+
         // bouncing test, but only if 2 particles colliding
-        if (globalThis.collisionLookupCountAtCell[i] === 2){
+        /*if (globalThis.collisionLookupCountAtCell[i] === 2){
             let vx1 = globalThis.particlesVelocitiesX[particlesToCheck[0]];
             let vy1 = globalThis.particlesVelocitiesY[particlesToCheck[0]];
             let normalLength = length(vx1, vy1);
@@ -231,16 +262,34 @@ function update(delta: Number): void {
                 globalThis.particlesAlive[particlesToCheck[1]] = false;
             }
             continue;
+        }*/
+
+        let collisionPositionX = globalThis.particlesPositionsX[particlesToCheck[0]];
+        let collisionPositionY = globalThis.particlesPositionsY[particlesToCheck[0]];
+
+        let allCollidingAreBullets = globalThis.isBullet[particlesToCheck[0]];
+
+        for (let j = 1; j < globalThis.collisionLookupCountAtCell[i]; j++) {
+            if (globalThis.isBullet[particlesToCheck[j]] !== allCollidingAreBullets) {
+                allCollidingAreBullets = false;
+                break;
+            }
+        }
+        
+        // BUG: very bugged, asteroids disappear by themselves over time
+        if (!allCollidingAreBullets) { // bullets don't destroy bullets
+            // kill 1 or 2 from the cell
+            // globalThis.particlesAlive[particlesToCheck[0]] = false;
+            // // if (globalThis.tick % 2 == 0)
+            //     globalThis.particlesAlive[particlesToCheck[1]] = false;
         }
 
-        for (let j = 0; j < globalThis.collisionLookupCountAtCell[i]; j++) {
-            globalThis.particlesAlive[particlesToCheck[j]] = false;
-            
-            if (particlesToCheck[j] === globalThis.player1ShootOriginParticle) {
-                if (window.confirm("YOU DIED. Try again?"))
-                    window.location.reload();
-                console.log("Destroyed shoot origin! Probably because the planet (and so the 'cannon') rotated into the bullet it just shot.");
-            }
+        // check if player died
+        if (!globalThis.particlesAlive[globalThis.player1ShootOriginParticle] && !globalThis.player1Dead) {
+            globalThis.player1Dead = true;
+            if (window.confirm("YOU DIED. Try again?"))
+                window.location.reload();
+            console.log("Destroyed shoot origin!");
         }
     }
 
@@ -254,19 +303,13 @@ function update(delta: Number): void {
 
 
     if (globalThis.tick == 1) {
-        spawnBall(0, 12, 11, 1/5, 0.4/5); // if speed is to low, the asteroid doesn't damage the planet for some reason
-        spawnBall(0, 80, 16, 1/5, 0.1/5); // or does it, but does it so equally around the rim that I don't notice?
+        spawnBall(0, 12, 11, 1 / 5, 0.4 / 5); // if speed is to low, the asteroid doesn't damage the planet for some reason
+        spawnBall(0, 80, 16, 1 / 5, 0.1 / 5); // or does it, but does it so equally around the rim that I don't notice?
         spawnBall(42, 170, 20, 1, -0.2);
     }
     // shoot
-    if (globalThis.clickNotYetHandled) {
-        globalThis.clickNotYetHandled = false;
-
-        if (Date.now() - globalThis.player1LastShotTime > (250+512)/2){ // 1s cooldown
-            console.log("Shot " + (Date.now() - globalThis.player1LastShotTime) + " after previous shot");
-            shoot();
-            globalThis.player1LastShotTime = Date.now();
-        }
+    if (globalThis.isShooting) {
+        shoot();
     }
 
     // apply new positions to positions arrays, and clear newPositions arrays; also store prevTickPositions
@@ -278,10 +321,14 @@ function update(delta: Number): void {
     }
 
     globalThis.tick++;
+    if (globalThis.tick % 60 == 0)
+        console.log("PERF | Update " + (performance.now() - frameStartTimestamp) + "ms");
+
+    if (globalThis.tick % 60 == 0)
+        console.log("DEBUG | Dead particles in pool: " + globalThis.particlesAlive.filter(x => !x).length);
 }
 
-function draw(interpolationPercentage: number) { // with fillRect takes ~3 ms, with setImageData takes ~0.5 ms on my PC :)
-    // console.log("alive: " +globalThis.particlesAlive.filter(x => x == true).length);
+function draw(interpolationPercentage: number) { // with fillRect takes ~3 ms, with setImageData takes ~0.5 ms on my PC, ~1.3 ms with planet trail
     const width = globalThis.canvas.width;
     const height = globalThis.canvas.height;
     let imageData = globalThis.ctx.createImageData(width, height);
@@ -294,7 +341,6 @@ function draw(interpolationPercentage: number) { // with fillRect takes ~3 ms, w
     }
 
     // draw a grey trail for every particle, consisting of 1-3 pixels behind the particle (so opposite of velocity)
-    // this will be slooow
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         if (!globalThis.particlesAlive[i])
             continue;
@@ -380,7 +426,7 @@ function isPointInCircle(x: number, y: number, centerX: number, centerY: number,
     return (x - centerX) * (x - centerX) + (y - centerY) * (y - centerY) < (radius + 0.5) * (radius + 0.5);
 }
 
-function spawnBall(centerX: number, centerY: number, r: number, vx: number, vy: number): void {
+function spawnBall(centerX: number, centerY: number, r: number, vx: number, vy: number, isBullet = false): void {
     const minX: number = centerX - r; // maybe also -0.5
     const maxX: number = centerX + r + 1; // maybe also +0.5
     const minY: number = centerY - r; // maybe also -0.5
@@ -403,6 +449,7 @@ function spawnBall(centerX: number, centerY: number, r: number, vx: number, vy: 
                 globalThis.particlesVelocitiesY[i] = vy;
                 globalThis.particlesNewPositionsX[i] = x;
                 globalThis.particlesNewPositionsY[i] = y;
+                globalThis.isBullet[i] = isBullet;
                 foundPixelForThisParticle = true
                 if (i == 0)
                     console.log("index " + i + " at " + x + "; " + y);
@@ -415,6 +462,23 @@ function spawnBall(centerX: number, centerY: number, r: number, vx: number, vy: 
     }
 }
 
+function spawnSingle(x: number, y: number, vx: number, vy: number, isBullet = false): void{
+    for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+        if (globalThis.particlesAlive[i])
+            continue; // this particle is already used for something
+
+        globalThis.particlesAlive[i] = true;
+        globalThis.particlesVelocitiesX[i] = vx;
+        globalThis.particlesVelocitiesY[i] = vy;
+        globalThis.particlesNewPositionsX[i] = x;
+        globalThis.particlesNewPositionsY[i] = y;
+        globalThis.isBullet[i] = isBullet;
+        return;
+    }
+    
+    console.error("spawnSingle failed: no free particle found");
+}
+
 function length(x: number, y: number): number {
     return Math.sqrt(x * x + y * y);
 }
@@ -424,13 +488,25 @@ async function sleep(msec) {
     return new Promise(resolve => setTimeout(resolve, msec));
 }
 
+function getRandomInRange(min, max) {
+    return Math.random() * (max - min) + min;
+}
+
 function onPointerDown(event: PointerEvent) {
-    // console.log("pointer down");
+    console.log("pointer down");
+    globalThis.isShooting = true;
+}
+
+function onPointerMove(event: PointerEvent) {
+    // console.log("pointer move");
     // includes canvas scale
     const canvasWidth = (event.target as HTMLElement).offsetWidth;
     const canvasHeight = (event.target as HTMLElement).offsetHeight;
-    console.log("pointer down at " + event.offsetX / canvasWidth + "; " + event.offsetY / canvasHeight);
-    globalThis.pointerClickX = event.offsetX / canvasWidth * globalThis.particlesColumns;
-    globalThis.pointerClickY = event.offsetY / canvasHeight * globalThis.particlesRows;
-    globalThis.clickNotYetHandled = true;
+    globalThis.pointerX = event.offsetX / canvasWidth * globalThis.particlesColumns;
+    globalThis.pointerY = event.offsetY / canvasHeight * globalThis.particlesRows;
+}
+
+function onPointerUp(event: PointerEvent) {
+    // console.log("pointer up");
+    globalThis.isShooting = false;
 }
