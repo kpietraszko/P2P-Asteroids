@@ -32,3 +32,11 @@ body {
         width: calc(96vh * 320/200);
     }
 }
+
+#menu{
+    position: absolute;
+}
+
+#menu *{
+    font-size: 2em;
+}

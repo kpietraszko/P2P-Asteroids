@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "dependencies": {
     "@types/mainloop.js": "^1.0.5",
-    "mainloop.js": "^1.0.4"
+    "mainloop.js": "^1.0.4",
+    "peerjs": "^1.3.2"
   },
   "devDependencies": {
     "@tsconfig/recommended": "^1.0.1",

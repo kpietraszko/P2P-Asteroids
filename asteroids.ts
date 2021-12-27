@@ -1,14 +1,13 @@
 ﻿// @ts-ignore Rider's TS compiler works weird compared to Parcel's
-import MainLoop = require("mainloop.js");
+// import MainLoop = require("mainloop.js");
+import MainLoop from "mainloop.js";
+import Peer, {PeerJSOption} from "peerjs";
 
 window.addEventListener("load", onLoaded);
 
 
-function onLoaded() {
-    // TODO: add class/interface to globalThis, that holds all these
-    console.log = function() {}; // DISABLES CONSOLE.LOG
+function SetupCanvas() {
     globalThis.canvas = <HTMLCanvasElement>document.getElementById("canvas"); // careful, this means canvas won't ever get GC'ed
-    globalThis.fpsCounter = <HTMLElement>document.getElementById("fps");
     globalThis.particlesColumns = 320 as number;
     globalThis.particlesRows = 200 as number;
     globalThis.initialParticlesCount = globalThis.particlesColumns * globalThis.particlesRows;
@@ -17,18 +16,101 @@ function onLoaded() {
     globalThis.ctx = (<HTMLCanvasElement>globalThis.canvas).getContext("2d", {alpha: false});
     globalThis.ctx.imageSmoothingEnabled = false;
     globalThis.ctx.fillStyle = "black";
+}
 
+function SetupInputAndOrientation() {
     globalThis.canvas.onpointerdown = onPointerDown;
     globalThis.canvas.onpointermove = onPointerMove;
     globalThis.canvas.onpointerup = onPointerUp;
 
     let isMobile = () => 'ontouchstart' in document.documentElement && /mobi/i.test(navigator.userAgent);
     let isLandscape = () => screen.orientation.type === "landscape-primary" || screen.orientation.type === "landscape-secondary";
-    
+
     screen.orientation.addEventListener('change', function (e) {
         if (isMobile() && isLandscape())
             document.documentElement.requestFullscreen();
     });
+}
+
+function onLoaded(){
+    let menuElement = <HTMLInputElement>document.getElementById("menu");
+    const peerOptions = {
+        config: {'iceServers': [
+                { urls: 'stun:stun.threatfrom.space:3478 ' },
+                { urls: 'turn:turn.threatfrom.space:3478', username: "guest", credential: "somepassword" }
+            ]},
+        debug: 3,
+    } as PeerJSOption;
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    const joinId = urlParams.get("join");
+    if (joinId){
+        menuElement.parentNode.removeChild(menuElement);
+        const peer = new Peer(peerOptions);
+        peer.on('error', function (err) {
+            console.log(err);
+        });
+        
+        peer.on('open', id => {
+            console.log("Trying to connect to " + joinId);
+            let conn = peer.connect(joinId);
+            conn.on("open", () => {
+                conn.send("JOINER | conn on open");
+            });
+            setupGameForJoiner();
+        });
+        
+        return;
+    }
+    
+    var hostButton = <HTMLCanvasElement>document.getElementById("hostButton");
+    var idElement = <HTMLInputElement>document.getElementById("thisPeerId");
+    
+    hostButton.addEventListener("click", () => {
+        setupGameForHost();
+        const peer = new Peer(peerOptions);
+        peer.on('error', function (err) {
+            console.log(err);
+        });
+        
+        peer.on("open", id => {
+            const joinUrl = "https://threatfrom.space?join=" + id;
+            idElement.innerText = joinUrl;
+            if (navigator.share){
+                idElement.addEventListener("click", () => {
+                    navigator.share({
+                        title: "Join me in game",
+                        url: joinUrl
+                    }).then(() => idElement.parentNode.removeChild(idElement));
+                });
+                
+            }
+
+            peer.on("connection", conn => {
+                console.log("HOST | connection callback");
+                
+                conn.on("data", data => {
+                    console.log("HOST | Received data: " + data);
+                });
+            });
+        })
+        
+       
+        hostButton.parentNode.removeChild(hostButton);
+    });
+}
+
+function setupGameForJoiner(){
+    SetupCanvas();
+    SetupInputAndOrientation();
+    
+}
+
+function setupGameForHost() {
+    // TODO: add class/interface to globalThis, that holds all these
+    // console.log = function() {}; // DISABLES CONSOLE.LOG
+    SetupCanvas();
+    SetupInputAndOrientation();
 
     globalThis.particlesPositionsX = new Float32Array(globalThis.initialParticlesCount); // TODO: those are pools of particles
     globalThis.particlesPositionsY = new Float32Array(globalThis.initialParticlesCount);
@@ -102,7 +184,7 @@ function shoot() {
         shootOriginXRelToPlanetCenter = shootOriginXRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
         shootOriginYRelToPlanetCenter = shootOriginYRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
 
-        console.log("shootOriginX: " + shootOriginX + " shootOriginY: " + shootOriginY);
+        // console.log("shootOriginX: " + shootOriginX + " shootOriginY: " + shootOriginY);
 
         let perfectVelocityX = globalThis.pointerX - shootOriginX;
         if (isNaN(perfectVelocityX)) {
@@ -114,7 +196,7 @@ function shoot() {
         let dotProduct = (perfectVelocityX * shootOriginXRelToPlanetCenter) + (perfectVelocityY * shootOriginYRelToPlanetCenter);
         if (dotProduct < -0.1) {
             // trying to shoot into the planet, don't shoot
-            console.log("ABORT SHOT");
+            // console.log("ABORT SHOT");
             directionOk = false;
         }
 
@@ -345,11 +427,11 @@ function update(delta: Number): void {
     }
 
     globalThis.tick++;
-    if (globalThis.tick % 60 == 0)
+    /*if (globalThis.tick % 60 == 0)
         console.warn("PERF | Update " + (performance.now() - frameStartTimestamp) + "ms");
 
     if (globalThis.tick % 60 == 0)
-        console.log("DEBUG | Dead particles in pool: " + globalThis.particlesAlive.filter(x => !x).length);
+        console.log("DEBUG | Dead particles in pool: " + globalThis.particlesAlive.filter(x => !x).length);*/
 }
 
 function draw(interpolationPercentage: number) { // with fillRect takes ~3 ms, with setImageData takes ~0.5 ms on my PC, ~1.3 ms with planet trail

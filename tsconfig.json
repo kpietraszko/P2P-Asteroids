@@ -3,7 +3,8 @@
     "module": "es2020",
     "target": "es2020",
     "sourceMap": true,
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true
   },
   "exclude": [
     "node_modules"
