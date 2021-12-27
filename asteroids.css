@@ -1,5 +1,13 @@
-﻿body{
+﻿html, body{
+    overflow: hidden;
+    margin: 0 !important;
+}
 
+body {
+    margin: 0;
+    padding: 6px;
+    /*padding-top: 10px;*/
+    /*padding-left: 10px;*/
 }
 
 #fps{
@@ -15,6 +23,7 @@
     width: 98vw;
     height: calc(98vw * 200 / 320);
     box-sizing: border-box;
+    touch-action: none; /* this not only prevents scrolling, but also refreshing and back gesture on mobile, reconsider */
 }
 /* 100 * 320/200 = 160 */
 @media (min-width: 160vh) {

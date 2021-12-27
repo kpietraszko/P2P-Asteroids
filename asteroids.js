@@ -1,6 +1,7 @@
 window.addEventListener("load", onLoaded);
 function onLoaded() {
     // TODO: add class/interface to globalThis, that holds all these
+    console.log = function () { }; // DISABLES CONSOLE.LOG
     globalThis.canvas = document.getElementById("canvas"); // careful, this means canvas won't ever get GC'ed
     globalThis.fpsCounter = document.getElementById("fps");
     globalThis.particlesColumns = 320;
@@ -14,9 +15,10 @@ function onLoaded() {
     globalThis.canvas.onpointerdown = onPointerDown;
     globalThis.canvas.onpointermove = onPointerMove;
     globalThis.canvas.onpointerup = onPointerUp;
-    let isMobile = window.matchMedia("only screen and (max-width: 480px)").matches;
+    let isMobile = () => 'ontouchstart' in document.documentElement && /mobi/i.test(navigator.userAgent);
+    let isLandscape = () => screen.orientation.type === "landscape-primary" || screen.orientation.type === "landscape-secondary";
     screen.orientation.addEventListener('change', function (e) {
-        if (window.matchMedia("only screen and (max-height: 4200px)").matches && (screen.orientation.type === "landscape-primary" || screen.orientation.type === "landscape-secondary"))
+        if (isMobile() && isLandscape())
             document.documentElement.requestFullscreen();
     });
     globalThis.particlesPositionsX = new Float32Array(globalThis.initialParticlesCount); // TODO: those are pools of particles
@@ -27,6 +29,7 @@ function onLoaded() {
     globalThis.particlesVelocitiesY = new Float32Array(globalThis.initialParticlesCount);
     globalThis.particlesAlive = new Array(globalThis.initialParticlesCount).fill(false);
     globalThis.rotationGroupAssignments = new Uint8Array(globalThis.initialParticlesCount).fill(0);
+    globalThis.particleTimeToLive = new Uint8Array(globalThis.initialParticlesCount).fill(255); // 255 means infinite
     globalThis.isBullet = new Array(globalThis.initialParticlesCount).fill(false);
     globalThis.previousBulletId = 0;
     globalThis.player1ShootOriginParticle = -1;
@@ -81,72 +84,46 @@ function shoot() {
         shootOriginXRelToPlanetCenter = shootOriginXRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
         shootOriginYRelToPlanetCenter = shootOriginYRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
         console.log("shootOriginX: " + shootOriginX + " shootOriginY: " + shootOriginY);
-        let velocityX = globalThis.pointerX - shootOriginX;
-        let velocityY = globalThis.pointerY - shootOriginY;
+        let perfectVelocityX = globalThis.pointerX - shootOriginX;
+        if (isNaN(perfectVelocityX)) {
+            throw new Error("NaN");
+        }
+        let perfectVelocityY = globalThis.pointerY - shootOriginY;
         let directionOk = true;
-        let dotProduct = (velocityX * shootOriginXRelToPlanetCenter) + (velocityY * shootOriginYRelToPlanetCenter);
+        let dotProduct = (perfectVelocityX * shootOriginXRelToPlanetCenter) + (perfectVelocityY * shootOriginYRelToPlanetCenter);
         if (dotProduct < -0.1) {
             // trying to shoot into the planet, don't shoot
             console.log("ABORT SHOT");
             directionOk = false;
         }
         if (directionOk) {
-            // find dead particle(s) in pool, give it velocity according to click position
-            // region single pixel bullet
-            /*for (let i = 0; i < globalThis.initialParticlesCount; i++) {
-                if (i === globalThis.initialParticlesCount - 1) {
-                    console.log("no dead particles in pool, can't shoot");
+            //randomize direction a bit for every bullet
+            for (let i = 0; i < 5; i++) {
+                let angle = getRandomInRange(-0.08, 0.08); // with radius 40 this should amount to linear velocity just below 1 (so slower than bullets)
+                let velocityX = (perfectVelocityX) * Math.cos(angle) - perfectVelocityY * Math.sin(angle);
+                let velocityY = (perfectVelocityX) * Math.sin(angle) + perfectVelocityY * Math.cos(angle);
+                let velocityMagnitude = length(velocityX, velocityY);
+                velocityX = velocityX / velocityMagnitude; // normalized
+                velocityY = velocityY / velocityMagnitude; // normalized
+                if (isNaN(velocityX) || isNaN(velocityY)) {
+                    throw new Error("NaN velocity");
                 }
-
-                if (globalThis.particlesAlive[i])
-                    continue; // this particle is already used for something
-
-                globalThis.particlesVelocitiesX[i] = velocityX;
-                globalThis.particlesVelocitiesY[i] = velocityY;
-
-                // offset the initial bullet position to avoid destroying shoot origin particle itself
-                
-                globalThis.particlesPositionsX[i] = shootOriginX + velocityX * 3;
-                globalThis.particlesPositionsY[i] = shootOriginY + velocityY * 3;
-                globalThis.particlesAlive[i] = true;
-                break;
-            }*/
-            // endregion
-            // TODO: randomize direction a bit for every bullet
-            // TODO: clean up, how to extract this to functions?
-            let angle = getRandomInRange(-0.05, 0.05); // with radius 40 this should amount to linear velocity just below 1 (so slower than bullets)
-            velocityX = (velocityX) * Math.cos(angle) - velocityY * Math.sin(angle);
-            velocityY = (velocityX) * Math.sin(angle) + velocityY * Math.cos(angle);
-            let velocityMagnitude = length(velocityX, velocityY);
-            velocityX = velocityX / velocityMagnitude; // normalized
-            velocityY = velocityY / velocityMagnitude; // normalized
-            spawnSingle(shootOriginX + velocityX * 4, shootOriginY + velocityY * 4, velocityX, velocityY, true);
-            angle = getRandomInRange(-0.05, 0.05); // with radius 40 this should amount to linear velocity just below 1 (so slower than bullets)
-            velocityX = (velocityX) * Math.cos(angle) - velocityY * Math.sin(angle);
-            velocityY = (velocityX) * Math.sin(angle) + velocityY * Math.cos(angle);
-            velocityMagnitude = length(velocityX, velocityY);
-            velocityX = velocityX / velocityMagnitude; // normalized
-            velocityY = velocityY / velocityMagnitude; // normalized
-            spawnSingle(shootOriginX + velocityX * 4, shootOriginY + velocityY * 4, velocityX, velocityY, true);
-            angle = getRandomInRange(-0.05, 0.05); // with radius 40 this should amount to linear velocity just below 1 (so slower than bullets)
-            velocityX = (velocityX) * Math.cos(angle) - velocityY * Math.sin(angle);
-            velocityY = (velocityX) * Math.sin(angle) + velocityY * Math.cos(angle);
-            velocityMagnitude = length(velocityX, velocityY);
-            velocityX = velocityX / velocityMagnitude; // normalized
-            velocityY = velocityY / velocityMagnitude; // normalized
-            spawnSingle(shootOriginX + velocityX * 4, shootOriginY + velocityY * 4, velocityX, velocityY, true);
-            angle = getRandomInRange(-0.05, 0.05); // with radius 40 this should amount to linear velocity just below 1 (so slower than bullets)
-            velocityX = (velocityX) * Math.cos(angle) - velocityY * Math.sin(angle);
-            velocityY = (velocityX) * Math.sin(angle) + velocityY * Math.cos(angle);
-            velocityMagnitude = length(velocityX, velocityY);
-            velocityX = velocityX / velocityMagnitude; // normalized
-            velocityY = velocityY / velocityMagnitude; // normalized
-            spawnSingle(shootOriginX + velocityX * 4, shootOriginY + velocityY * 4, velocityX, velocityY, true);
+                spawnSingle(shootOriginX + velocityX * 4, shootOriginY + velocityY * 4, velocityX, velocityY, true);
+            }
         }
     }
 }
 function update(delta) {
     let frameStartTimestamp = performance.now();
+    for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+        if (globalThis.particleTimeToLive[i] !== 255) {
+            globalThis.particleTimeToLive[i]--;
+            globalThis.particlesVelocitiesX[i] *= 0.96;
+            globalThis.particlesVelocitiesY[i] *= 0.96;
+        }
+        if (globalThis.particleTimeToLive[i] === 0)
+            globalThis.particlesAlive[i] = false;
+    }
     // rotation to velocity
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         if (!globalThis.particlesAlive[i])
@@ -163,6 +140,9 @@ function update(delta) {
             let yr = (x - pivotX) * Math.sin(angle) + (y - pivotY) * Math.cos(angle) + pivotY;
             globalThis.particlesVelocitiesX[i] = xr - x;
             globalThis.particlesVelocitiesY[i] = yr - y;
+            if (isNaN(globalThis.particlesVelocitiesX[i]) || isNaN(globalThis.particlesVelocitiesY[i])) {
+                throw new Error("NaN");
+            }
         }
     }
     // apply velocity and fill particle collision lookup
@@ -170,9 +150,13 @@ function update(delta) {
         if (!globalThis.particlesAlive[i]) {
             continue;
         }
-        let prevX = globalThis.particlesPositionsX[i];
-        let prevY = globalThis.particlesPositionsY[i];
+        let prevX = globalThis.particlesPositionsX[i].valueOf();
+        if (isNaN(prevX))
+            throw new Error("NaN");
+        let prevY = globalThis.particlesPositionsY[i].valueOf();
         let newX = prevX + globalThis.particlesVelocitiesX[i];
+        if (isNaN(globalThis.particlesVelocitiesX[i]) || isNaN(globalThis.particlesVelocitiesY[i]))
+            throw new Error("NaN");
         let newY = prevY + globalThis.particlesVelocitiesY[i];
         globalThis.particlesNewPositionsX[i] = newX;
         globalThis.particlesNewPositionsY[i] = newY;
@@ -183,23 +167,26 @@ function update(delta) {
             globalThis.particlesAlive[i] = false;
             continue;
         }
+        // BUG: how the hell is this NaN??
         let indexOfCollisionLookup = Math.floor(newY) * globalThis.particlesColumns + Math.floor(newX);
         if (globalThis.collisionLookupCountAtCell[indexOfCollisionLookup] >= 4) {
             continue; // collision cell is full
         }
-        globalThis.particleCollisionLookup[indexOfCollisionLookup][globalThis.collisionLookupCountAtCell[indexOfCollisionLookup]] = i;
-        globalThis.collisionLookupCountAtCell[indexOfCollisionLookup]++;
+        if (!newPosOutsideGrid) {
+            globalThis.particleCollisionLookup[indexOfCollisionLookup][globalThis.collisionLookupCountAtCell[indexOfCollisionLookup]] = i;
+            globalThis.collisionLookupCountAtCell[indexOfCollisionLookup]++;
+        }
     }
     // handle collisions
-    for (let i = 0; i < globalThis.particleCollisionLookup.length; i++) {
-        if (globalThis.collisionLookupCountAtCell[i] <= 1)
+    for (let cellIndex = 0; cellIndex < globalThis.particleCollisionLookup.length; cellIndex++) {
+        if (globalThis.collisionLookupCountAtCell[cellIndex] <= 1)
             continue;
-        let particlesToCheck = globalThis.particleCollisionLookup[i];
+        let particlesToCheck = globalThis.particleCollisionLookup[cellIndex];
         let firstParticlesRotationGroup = globalThis.rotationGroupAssignments[particlesToCheck[0]];
         let allParticlesSameRotationGroup = true;
         if (firstParticlesRotationGroup === 1) // 1 is planet. workaround for now so that asteroids collide with each other
          {
-            for (let j = 1; j < globalThis.collisionLookupCountAtCell[i]; j++) {
+            for (let j = 1; j < globalThis.collisionLookupCountAtCell[cellIndex]; j++) {
                 if (globalThis.rotationGroupAssignments[particlesToCheck[j]] !== firstParticlesRotationGroup) {
                     allParticlesSameRotationGroup = false;
                     break; // BUG: disables collisions between asteroids
@@ -208,32 +195,12 @@ function update(delta) {
             if (allParticlesSameRotationGroup)
                 continue;
         }
-        // bouncing test, but only if 2 particles colliding
-        /*if (globalThis.collisionLookupCountAtCell[i] === 2){
-            let vx1 = globalThis.particlesVelocitiesX[particlesToCheck[0]];
-            let vy1 = globalThis.particlesVelocitiesY[particlesToCheck[0]];
-            let normalLength = length(vx1, vy1);
-            let nx = vx1 / normalLength;
-            let ny = vy1 / normalLength;
-            let dx = globalThis.particlesVelocitiesX[particlesToCheck[1]];
-            let dy = globalThis.particlesVelocitiesY[particlesToCheck[1]];
-            let bouncedVx = dx - 2*((dx * nx) + (dy * ny)) * nx / 2;
-            let bouncedVy = dy - 2*((dx * nx) + (dy * ny)) * ny / 2;
-            globalThis.particlesAlive[particlesToCheck[0]] = false;
-            globalThis.particlesVelocitiesX[particlesToCheck[1]] = bouncedVx;
-            globalThis.particlesVelocitiesY[particlesToCheck[1]] = bouncedVy;
-            if (Math.abs(bouncedVx) < 0.3 && Math.abs(bouncedVy) < 0.3) {
-                // kill it too, if resulting bounce is too slow
-                globalThis.particlesAlive[particlesToCheck[1]] = false;
-            }
-            continue;
-        }*/
         let collisionPositionX = globalThis.particlesPositionsX[particlesToCheck[0]];
         let collisionPositionY = globalThis.particlesPositionsY[particlesToCheck[0]];
         let allCollidingAreBullets = globalThis.isBullet[particlesToCheck[0]];
         let anyIsBullet = globalThis.isBullet[particlesToCheck[0]];
         let anyIsPlanet = globalThis.rotationGroupAssignments[particlesToCheck[0]] === 1;
-        for (let j = 1; j < globalThis.collisionLookupCountAtCell[i]; j++) {
+        for (let j = 1; j < globalThis.collisionLookupCountAtCell[cellIndex]; j++) {
             if (globalThis.isBullet[particlesToCheck[j]])
                 anyIsBullet = true;
             else
@@ -241,12 +208,53 @@ function update(delta) {
             if (globalThis.rotationGroupAssignments[particlesToCheck[j]] === 1)
                 anyIsPlanet = true;
         }
-        // BUG: very bugged, asteroids disappear by themselves over time
         if (anyIsPlanet || (anyIsBullet && !allCollidingAreBullets)) { // bullets don't destroy bullets
+            // bouncing
+            // calculate normal
+            let bulletParticleIndex = particlesToCheck[0];
+            let particleXRounded = Math.round(globalThis.particlesPositionsX[bulletParticleIndex]);
+            let particleYRounded = Math.round(globalThis.particlesPositionsY[bulletParticleIndex]);
+            let summedDirectionFromNeighboursToParticleX = 0;
+            let summedDirectionFromNeighboursToParticleY = 0;
+            for (let x = -1; x <= 1; x++) {
+                for (let y = -1; y <= 1; y++) {
+                    if (x == 0 && y == 0)
+                        continue; // ignore the actual particle
+                    let neighborAbsoluteX = particleXRounded + x;
+                    let neighborAbsoluteY = particleYRounded + y;
+                    if (neighborAbsoluteX < 0 || neighborAbsoluteX >= globalThis.particlesColumns || neighborAbsoluteY < 0 || neighborAbsoluteY >= globalThis.particlesRows)
+                        continue;
+                    let indexOfCollisionLookup = Math.floor(neighborAbsoluteY) * globalThis.particlesColumns + Math.floor(neighborAbsoluteX);
+                    if (globalThis.collisionLookupCountAtCell[indexOfCollisionLookup] === 0)
+                        continue;
+                    summedDirectionFromNeighboursToParticleX += globalThis.particlesPositionsX[bulletParticleIndex] - neighborAbsoluteX;
+                    summedDirectionFromNeighboursToParticleY += globalThis.particlesPositionsY[bulletParticleIndex] - neighborAbsoluteY;
+                }
+            }
+            // end of calculating normal
+            // this is false for example when colliding with a lonely particle with no neighbors
+            let normalLength = length(summedDirectionFromNeighboursToParticleX, summedDirectionFromNeighboursToParticleY);
+            if (normalLength !== 0) {
+                let nx = summedDirectionFromNeighboursToParticleX / normalLength;
+                let ny = summedDirectionFromNeighboursToParticleY / normalLength;
+                let dx = globalThis.particlesVelocitiesX[particlesToCheck[1]];
+                let dy = globalThis.particlesVelocitiesY[particlesToCheck[1]];
+                let bouncedVx = dx - 2 * ((dx * nx) + (dy * ny)) * nx / 2;
+                let bouncedVy = dy - 2 * ((dx * nx) + (dy * ny)) * ny / 2;
+                if (isNaN(bouncedVx) || isNaN(bouncedVy))
+                    throw new Error("NaN");
+                if ((Math.abs(bouncedVx) > 0.1 || Math.abs(bouncedVy) > 0.1)) {
+                    globalThis.particlesVelocitiesX[particlesToCheck[1]] = bouncedVx;
+                    globalThis.particlesVelocitiesY[particlesToCheck[1]] = bouncedVy;
+                    globalThis.particleTimeToLive[particlesToCheck[1]] = 20;
+                }
+            }
+            else
+                globalThis.particlesAlive[particlesToCheck[1]] = false;
             // kill 1 or 2 from the cell
             globalThis.particlesAlive[particlesToCheck[0]] = false;
             // // if (globalThis.tick % 2 == 0)
-            globalThis.particlesAlive[particlesToCheck[1]] = false;
+            // globalThis.particlesAlive[particlesToCheck[1]] = false;
         }
         // check if player died
         if (!globalThis.particlesAlive[globalThis.player1ShootOriginParticle] && !globalThis.player1Dead) {
@@ -274,6 +282,8 @@ function update(delta) {
     }
     // apply new positions to positions arrays, and clear newPositions arrays; also store prevTickPositions
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
+        if (isNaN(globalThis.particlesNewPositionsX[i]))
+            throw new Error("NaN in new positions");
         globalThis.particlesPositionsX[i] = globalThis.particlesNewPositionsX[i].valueOf();
         globalThis.particlesPositionsY[i] = globalThis.particlesNewPositionsY[i].valueOf();
         globalThis.particlesNewPositionsX[i] = 0;
@@ -281,7 +291,7 @@ function update(delta) {
     }
     globalThis.tick++;
     if (globalThis.tick % 60 == 0)
-        console.log("PERF | Update " + (performance.now() - frameStartTimestamp) + "ms");
+        console.warn("PERF | Update " + (performance.now() - frameStartTimestamp) + "ms");
     if (globalThis.tick % 60 == 0)
         console.log("DEBUG | Dead particles in pool: " + globalThis.particlesAlive.filter(x => !x).length);
 }
@@ -299,7 +309,7 @@ function draw(interpolationPercentage) {
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         if (!globalThis.particlesAlive[i])
             continue;
-        if (globalThis.particlesVelocitiesX === 0 && globalThis.particlesVelocitiesY === 0)
+        if (globalThis.particlesVelocitiesX[i] === 0 && globalThis.particlesVelocitiesY[i] === 0)
             continue;
         if (globalThis.rotationGroupAssignments[i] !== 1) // only draw trails for planet
             continue;
@@ -344,7 +354,11 @@ function draw(interpolationPercentage) {
         imageData.data[offset] = 0;
         imageData.data[offset + 1] = 0;
         imageData.data[offset + 2] = 0;
-        // imageData.data[offset + 3] = 255;
+        if (globalThis.particleTimeToLive[i] < 255) {
+            imageData.data[offset] = 70;
+            imageData.data[offset + 1] = 70;
+            imageData.data[offset + 2] = 70;
+        }
     }
     globalThis.ctx.putImageData(imageData, 0, 0);
 }
@@ -384,6 +398,7 @@ function spawnBall(centerX, centerY, r, vx, vy, isBullet = false) {
                 globalThis.particlesVelocitiesY[i] = vy;
                 globalThis.particlesNewPositionsX[i] = x;
                 globalThis.particlesNewPositionsY[i] = y;
+                globalThis.particleTimeToLive[i] = 255;
                 globalThis.isBullet[i] = isBullet;
                 foundPixelForThisParticle = true;
                 if (i == 0)
@@ -404,6 +419,7 @@ function spawnSingle(x, y, vx, vy, isBullet = false) {
         globalThis.particlesVelocitiesY[i] = vy;
         globalThis.particlesNewPositionsX[i] = x;
         globalThis.particlesNewPositionsY[i] = y;
+        globalThis.particleTimeToLive[i] = 255;
         globalThis.isBullet[i] = isBullet;
         return;
     }
@@ -420,11 +436,16 @@ function getRandomInRange(min, max) {
     return Math.random() * (max - min) + min;
 }
 function onPointerDown(event) {
-    console.log("pointer down");
+    // console.warn("pointer down");
     globalThis.isShooting = true;
+    // also setting position here to avoid undefined pointerX between Down and Move calls
+    const canvasWidth = event.target.offsetWidth;
+    const canvasHeight = event.target.offsetHeight;
+    globalThis.pointerX = event.offsetX / canvasWidth * globalThis.particlesColumns;
+    globalThis.pointerY = event.offsetY / canvasHeight * globalThis.particlesRows;
 }
 function onPointerMove(event) {
-    // console.log("pointer move");
+    // console.warn("pointer move");
     // includes canvas scale
     const canvasWidth = event.target.offsetWidth;
     const canvasHeight = event.target.offsetHeight;
