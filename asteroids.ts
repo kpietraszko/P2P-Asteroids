@@ -61,7 +61,7 @@ function onLoaded() {
 
         peer.on('open', id => {
             console.log("Trying to connect to " + joinId);
-            let conn = peer.connect(joinId, {reliable: true, serialization: "none"}); // TODO: change reliable to false after testing, then make sure DataChannel.ordered is also false
+            let conn = peer.connect(joinId, {reliable: false, serialization: "none"}); // TODO: change reliable to false after testing, then make sure DataChannel.ordered is also false
             conn.on("open", () => {
                 conn.send("JOINER | conn on open");
                 conn.on("data", joinerOnData);
@@ -112,8 +112,9 @@ function onLoaded() {
 function setupGameForJoiner() {
     SetupCanvas();
     SetupInputAndOrientation();
-
-    globalThis.tick = 1;
+    
+    globalThis.delay = 3;
+    globalThis.tick = 1 - globalThis.delay;
     // TODO: warm up (maybe)
 
     // can't rely on requestAnimationFrame frame rate, any device can limit it to anything like 50, 30 
@@ -123,6 +124,10 @@ function setupGameForJoiner() {
 }
 
 function joinerUpdate(delta: Number) {
+    if (globalThis.tick < 1){
+        globalThis.tick++;
+        return;
+    }
     const width = globalThis.canvas.width;
     const height = globalThis.canvas.height;
     if (!globalThis.imageData)
@@ -133,11 +138,11 @@ function joinerUpdate(delta: Number) {
 }
 
 function joinerOnData(data: ArrayBuffer) {
-    // TODO: buffer incoming data, based on its packet's tick. In joinerUpdate pull relevant tick's packet and apply it to imageData
-    console.log("JOINER | Received data");
+    // TODO: buffer incoming data, based on its packet's tick, to a rolling(?) buffer
+    //  . In joinerUpdate pull relevant tick's packet and apply it to imageData
     let bitStream = new BitStream(data);
+    console.log("JOINER | Received " + bitStream.length / 8 + " bytes");
     let tick = bitStream.readUint32();
-    let numberOfFilled = 0;
 
     let imageData = globalThis.imageData;
     // TODO: move this from here, no buffering for now
@@ -154,11 +159,9 @@ function joinerOnData(data: ArrayBuffer) {
             imageData.data[i] = 0;
             imageData.data[i + 1] = 0;
             imageData.data[i + 2] = 0;
-            numberOfFilled++;
         }
     }
     globalThis.imageData = imageData;
-    console.log("JOINER | Received " + numberOfFilled + " filled pixels");
 }
 
 function SetupPlanet(planetRadius: number) {
@@ -501,19 +504,16 @@ function update(delta: Number): void {
 function sendData() {
     let bitStream = new BitStream(globalThis.dataToSend);
     const imageData = globalThis.imageData;
-    let numberOfFilled = 0;
 
     bitStream.writeUint32(globalThis.tick);
 
     for (let i = 0; i < imageData.data.length; i += 4) {
         let filled = imageData.data[i] !== 255;
         bitStream.writeBoolean(filled);
-        if (filled)
-            numberOfFilled++;
     }
 
     globalThis.otherPeerConnection.send(bitStream.buffer);
-    console.log("HOST | Sent " + numberOfFilled + " filled pixels");
+    console.log("HOST | Sent " + bitStream.length / 8 + " bytes");
 }
 
 function draw(interpolationPercentage: number) {
