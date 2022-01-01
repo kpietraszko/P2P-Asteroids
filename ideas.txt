@@ -6,6 +6,6 @@
  1 or 2 bits for each pixel {isFilled}{isGrey?(this bit is only added if isFilled===1)}
 
 - (circular) buffer for snapshots (size somewhere around 3). adds delay but reduces stutter on packet loss
-- send input from client
-- receive input on host and apply to second "turret"
+- send input from client - just the shoot position (target)?
+- receive input on host and apply to second "turret"; doesn't need tick included; doesn't matter if it's outdated, apply it anyway
 - (optional) invite code joining

@@ -46,7 +46,7 @@ function onLoaded() {
                 {urls: 'turn:turn.threatfrom.space:3478', username: "guest", credential: "somepassword"}
             ]
         },
-        debug: 3
+        debug: 1
     } as PeerJSOption;
 
     let urlParams = new URLSearchParams(window.location.search); // impossible to do on itch.io, so either the joining player will play outside itch.io, 
@@ -61,9 +61,9 @@ function onLoaded() {
 
         peer.on('open', id => {
             console.log("Trying to connect to " + joinId);
-            let conn = peer.connect(joinId, {reliable: false, serialization: "none"}); // TODO: change reliable to false after testing, then make sure DataChannel.ordered is also false
+            let conn = peer.connect(joinId, {reliable: false, serialization: "none"});
             conn.on("open", () => {
-                conn.send("JOINER | conn on open");
+                console.log("JOINER | conn on open " + Date.now());
                 conn.on("data", joinerOnData);
                 setupGameForJoiner();
             });
@@ -83,6 +83,7 @@ function onLoaded() {
 
         peer.on("open", id => {
             const joinUrl = "https://threatfrom.space?join=" + id;
+            // const joinUrl = "localhost:1234?join=" + id;
             idElement.innerText = joinUrl;
             if (navigator.share) {
                 idElement.addEventListener("click", () => {
@@ -97,6 +98,7 @@ function onLoaded() {
             peer.on("connection", conn => {
                 console.log("HOST | connection callback");
                 globalThis.otherPeerConnection = conn;
+                console.log("HOST | conn on open " + Date.now());
                 setupGameForHost();
                 // conn.on("data", data => {
                 //     console.log("HOST | Received data: " + data);
@@ -109,59 +111,104 @@ function onLoaded() {
     });
 }
 
-function setupGameForJoiner() {
+async function setupGameForJoiner() {
     SetupCanvas();
     SetupInputAndOrientation();
+    globalThis.lastAppliedTick = 0;
+    // for more than 2 colors Uint8Array instead of Array<boolean>
+    globalThis.snapshotsBuffer = new Array(3).fill(null).map(() => new Uint8Array(globalThis.particlesColumns * globalThis.particlesRows).fill(255)); // 64kB per slot
+    globalThis.snapshotsExist = new Array(globalThis.snapshotsBuffer.length).fill(false);
+    globalThis.snapshotsTick = new Array(globalThis.snapshotsBuffer).fill(0);
+    globalThis.initialDelay = globalThis.snapshotsBuffer.length + 1;
+    globalThis.debugLogIndex = 0;
     
-    globalThis.delay = 3;
-    globalThis.tick = 1 - globalThis.delay;
     // TODO: warm up (maybe)
 
     // can't rely on requestAnimationFrame frame rate, any device can limit it to anything like 50, 30 
     // which means update has to be called multiple times per frame
     const kindaTargetFPS = 30;
+    // await new Promise(r => setTimeout(r, globalThis.snapshotsBuffer.length * 1000 / kindaTargetFPS));
     MainLoop.setUpdate(joinerUpdate).setDraw(draw).setEnd(end).setMaxAllowedFPS(kindaTargetFPS).setSimulationTimestep(1000.0 / kindaTargetFPS).start();
 }
 
 function joinerUpdate(delta: Number) {
-    if (globalThis.tick < 1){
-        globalThis.tick++;
+    // initial delay
+    if (globalThis.initialDelay > 0) {
+        globalThis.initialDelay--;
         return;
     }
-    const width = globalThis.canvas.width;
-    const height = globalThis.canvas.height;
+
+    // console.log(globalThis.debugLogIndex + ";" + 1);
+    globalThis.debugLogIndex++;
+    // find index of pool to use
+    let lowestTickExisting = globalThis.snapshotsTick[0];
+    for (let i = 0; i < globalThis.snapshotsBuffer.length; i++) {
+        if (globalThis.snapshotsExist[i] && globalThis.snapshotsTick[i] < lowestTickExisting) {
+            lowestTickExisting = globalThis.snapshotsTick[i];
+        }
+    }
+    
+    let lowestTickExistingIndex = globalThis.snapshotsTick.indexOf(lowestTickExisting);
+    
+    if (!globalThis.snapshotsExist[lowestTickExistingIndex]){
+        // no snapshot available, wait
+        console.log("no snapshot available, wait"); // happens more often than expected
+        return;
+    }
+    
+    // console.log("applying snapshot");
+    globalThis.snapshotsExist[lowestTickExistingIndex] = false; // free snapshot pool slot
+
+    // apply to imageData
     if (!globalThis.imageData)
-        globalThis.imageData = globalThis.ctx.createImageData(width, height);
+        globalThis.imageData = globalThis.ctx.createImageData(globalThis.particlesColumns, globalThis.particlesRows);
     let imageData = globalThis.imageData;
-
-    globalThis.tick++;
-}
-
-function joinerOnData(data: ArrayBuffer) {
-    // TODO: buffer incoming data, based on its packet's tick, to a rolling(?) buffer
-    //  . In joinerUpdate pull relevant tick's packet and apply it to imageData
-    let bitStream = new BitStream(data);
-    console.log("JOINER | Received " + bitStream.length / 8 + " bytes");
-    let tick = bitStream.readUint32();
-
-    let imageData = globalThis.imageData;
-    // TODO: move this from here, no buffering for now
     for (let i = 0; i < imageData.data.length; i += 4) {
         imageData.data[i + 0] = 255;  // R value
         imageData.data[i + 1] = 255;    // G value
         imageData.data[i + 2] = 255;  // B value
         imageData.data[i + 3] = 255;  // A value
     }
+    
 
-    for (let i = 0; i < imageData.data.length; i += 4) {
-        let filled = bitStream.readBoolean();
-        if (filled) {
-            imageData.data[i] = 0;
-            imageData.data[i + 1] = 0;
-            imageData.data[i + 2] = 0;
-        }
+    for (let i = 0; i < globalThis.snapshotsBuffer[lowestTickExistingIndex].length; i++) {
+        let imageDataBaseIndex = i * 4;
+        let color = globalThis.snapshotsBuffer[lowestTickExistingIndex][i];
+        imageData.data[imageDataBaseIndex] = color;
+        imageData.data[imageDataBaseIndex + 1] = color;
+        imageData.data[imageDataBaseIndex + 2] = color;
     }
     globalThis.imageData = imageData;
+}
+
+function joinerOnData(data: ArrayBuffer) {
+    // console.log(globalThis.debugLogIndex + ";" + 0);
+    globalThis.debugLogIndex++;
+    let bitStream = new BitStream(data);
+    // console.log("JOINER | Received " + bitStream.length / 8 + " bytes");
+    let tick = bitStream.readUint32();
+    
+    // find index of buffer to use
+    let poolIndex = globalThis.snapshotsExist.indexOf(false);
+    
+    if (poolIndex === -1) { // no free slot in snapshot pool, find slot with lowest tick instead. Happens more often than expected, as often as "no snapshot available"
+        // think hard about this, could cause more frame drops than necessary
+        console.log("no free slot in snapshot pool, find slot with lowest tick instead");
+        poolIndex = globalThis.snapshotsTick.indexOf(Math.min(...globalThis.snapshotsTick));
+        // } else console.log("found free slot in snapshot pool");
+    }
+    
+    globalThis.snapshotsTick[poolIndex] = tick;
+    globalThis.snapshotsExist[poolIndex] = true;
+
+    for (let i = 0; i < globalThis.snapshotsBuffer[poolIndex].length; i++) {
+        let filled = bitStream.readBoolean();
+        let color = filled ? 0 : 255;
+        if (filled)
+            color = bitStream.readBoolean() ? 70 : 0;
+        
+        globalThis.snapshotsBuffer[poolIndex][i] = color;
+    }
 }
 
 function SetupPlanet(planetRadius: number) {
@@ -205,7 +252,8 @@ function setupGameForHost() {
     globalThis.player1ShootOriginParticle = -1;
     globalThis.player1LastShotTime = 0;
 
-    globalThis.dataToSend = new ArrayBuffer(4 /*tick*/ + (globalThis.particlesColumns * globalThis.particlesRows) / 8); // because 8 bools in a byte
+    // because 8 bools in a byte, *2 because at worse case every particle is grey so takes 2 bits
+    globalThis.dataToSend = new ArrayBuffer(4 /*tick*/ + (globalThis.particlesColumns * globalThis.particlesRows) / 8 * 2); 
 
     // max 4 particles per collision cell
     globalThis.particleCollisionLookup = new Array<Int32Array>(globalThis.particlesColumns * globalThis.particlesRows).fill(null).map(i => new Int32Array(4));
@@ -217,8 +265,7 @@ function setupGameForHost() {
     const planetRadius: number = 40;
 
     SetupPlanet(planetRadius);
-
-    // await sleep(1000);
+    
     globalThis.tick = 1;
     // TODO: warm up (maybe)
 
@@ -510,6 +557,10 @@ function sendData() {
     for (let i = 0; i < imageData.data.length; i += 4) {
         let filled = imageData.data[i] !== 255;
         bitStream.writeBoolean(filled);
+        if (filled) {
+            let isGrey = imageData.data[i] !== 0;
+            bitStream.writeBoolean(isGrey);
+        }
     }
 
     globalThis.otherPeerConnection.send(bitStream.buffer);
