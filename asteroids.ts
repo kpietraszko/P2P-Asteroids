@@ -564,7 +564,7 @@ function sendData() {
     }
 
     globalThis.otherPeerConnection.send(bitStream.buffer);
-    console.log("HOST | Sent " + bitStream.length / 8 + " bytes");
+    console.log("HOST | Sent " + bitStream.index / 8 + " bytes");
 }
 
 function draw(interpolationPercentage: number) {
