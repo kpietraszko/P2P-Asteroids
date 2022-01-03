@@ -62,6 +62,7 @@ function onLoaded() {
         peer.on('open', id => {
             console.log("Trying to connect to " + joinId);
             let conn = peer.connect(joinId, {reliable: false, serialization: "none"});
+            globalThis.connectionToHost = conn;
             conn.on("open", () => {
                 console.log("JOINER | conn on open " + Date.now());
                 conn.on("data", joinerOnData);
@@ -98,6 +99,7 @@ function onLoaded() {
             peer.on("connection", conn => {
                 console.log("HOST | connection callback");
                 globalThis.otherPeerConnection = conn;
+                conn.on("data", hostOnData);
                 console.log("HOST | conn on open " + Date.now());
                 setupGameForHost();
                 // conn.on("data", data => {
@@ -120,6 +122,7 @@ async function setupGameForJoiner() {
     globalThis.snapshotsExist = new Array(globalThis.snapshotsBuffer.length).fill(false);
     globalThis.snapshotsTick = new Array(globalThis.snapshotsBuffer).fill(0);
     globalThis.initialDelay = globalThis.snapshotsBuffer.length + 1;
+    globalThis.dataToSend = new ArrayBuffer(1 + 4 + 4); // isShooting, x, y
     globalThis.debugLogIndex = 0;
     
     // TODO: warm up (maybe)
@@ -179,9 +182,10 @@ function joinerUpdate(delta: Number) {
         imageData.data[imageDataBaseIndex + 2] = color;
     }
     globalThis.imageData = imageData;
+    sendInput();
 }
 
-function joinerOnData(data: ArrayBuffer) {
+function joinerOnData(data: ArrayBuffer) : void {
     // console.log(globalThis.debugLogIndex + ";" + 0);
     globalThis.debugLogIndex++;
     let bitStream = new BitStream(data);
@@ -211,13 +215,29 @@ function joinerOnData(data: ArrayBuffer) {
     }
 }
 
+function sendInput() : void {
+    let bitStream = new BitStream(globalThis.dataToSend);
+    bitStream.writeBoolean(globalThis.isShooting);
+    bitStream.writeFloat32(globalThis.pointerX);
+    bitStream.writeFloat32(globalThis.pointerY);
+    globalThis.connectionToHost.send(bitStream.buffer);
+}
+
+function hostOnData(data: ArrayBuffer) : void {
+    let bitStream = new BitStream(data);
+    globalThis.joinerIsShooting = bitStream.readBoolean();
+    globalThis.joinerPointerX = bitStream.readFloat32();
+    globalThis.joinerPointerY = bitStream.readFloat32();
+}
+
 function SetupPlanet(planetRadius: number) {
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         let x = Math.floor(i % globalThis.particlesColumns); // why floor?
         let y = Math.floor(i / globalThis.particlesColumns);
 
         if (isPointInCircle(x, y, globalThis.planetCenterX, globalThis.planetCenterY, planetRadius) ||
-            (x > globalThis.planetCenterX - 2 && x < globalThis.planetCenterX + 2 && y > globalThis.planetCenterY - planetRadius - 6 && y < globalThis.planetCenterY)) {
+            (x > globalThis.planetCenterX - 2 && x < globalThis.planetCenterX + 2 && y > globalThis.planetCenterY - planetRadius - 6 && y < globalThis.planetCenterY) ||
+            (x > globalThis.planetCenterX - 2 && x < globalThis.planetCenterX + 2 && y > globalThis.planetCenterY && y < globalThis.planetCenterY + planetRadius + 6)) {
             globalThis.particlesAlive[i] = true;
             // globalThis.particlesVelocitiesX[i] = 1.0;
             globalThis.particlesPositionsX[i] = x;
@@ -226,6 +246,11 @@ function SetupPlanet(planetRadius: number) {
             if (x === globalThis.planetCenterX && y === globalThis.planetCenterY - planetRadius - 5) {
                 globalThis.player1ShootOriginParticle = i;
                 console.log("player1ShootOriginParticle: " + x + " " + y);
+            }
+
+            if (x === globalThis.planetCenterX && y === globalThis.planetCenterY + planetRadius + 5) {
+                globalThis.player2ShootOriginParticle = i;
+                console.log("player2ShootOriginParticle: " + x + " " + y);
             }
         }
 
@@ -398,16 +423,24 @@ function handleCollisions() {
         // check if player died
         if (!globalThis.particlesAlive[globalThis.player1ShootOriginParticle] && !globalThis.player1Dead) {
             globalThis.player1Dead = true;
-            if (window.confirm("YOU DIED. Try again?"))
+            console.log("Destroyed player1 shoot origin!");
+        }
+
+        if (!globalThis.particlesAlive[globalThis.player2ShootOriginParticle] && !globalThis.player2Dead) {
+            globalThis.player2Dead = true;
+            console.log("Destroyed player2 shoot origin!");
+        }
+
+        if (globalThis.player1Dead && globalThis.player2Dead) {
+            if (window.confirm("YOU BOTH DIED. Try again?"))
                 window.location.reload();
-            console.log("Destroyed shoot origin!");
         }
     }
 }
 
-function shoot() {
-    let shootOriginX = globalThis.particlesPositionsX[globalThis.player1ShootOriginParticle];
-    let shootOriginY = globalThis.particlesPositionsY[globalThis.player1ShootOriginParticle];
+function shoot(shootOriginParticle : number, pointerX : number, pointerY : number) : void {
+    let shootOriginX = globalThis.particlesPositionsX[shootOriginParticle];
+    let shootOriginY = globalThis.particlesPositionsY[shootOriginParticle];
     let originOk = true;
     if (shootOriginX === 0 && shootOriginY === 0 || !globalThis.particlesAlive[globalThis.player1ShootOriginParticle]) {
         console.log("shoot origin particle is dead or something, can't shoot");
@@ -423,11 +456,11 @@ function shoot() {
 
         // console.log("shootOriginX: " + shootOriginX + " shootOriginY: " + shootOriginY);
 
-        let perfectVelocityX = globalThis.pointerX - shootOriginX;
+        let perfectVelocityX = pointerX - shootOriginX;
         if (isNaN(perfectVelocityX)) {
             throw new Error("NaN");
         }
-        let perfectVelocityY = globalThis.pointerY - shootOriginY;
+        let perfectVelocityY = pointerY - shootOriginY;
 
         let directionOk = true;
         let dotProduct = (perfectVelocityX * shootOriginXRelToPlanetCenter) + (perfectVelocityY * shootOriginYRelToPlanetCenter);
@@ -533,7 +566,11 @@ function update(delta: Number): void {
     }
     // shoot
     if (globalThis.isShooting) {
-        shoot();
+        shoot(globalThis.player1ShootOriginParticle, globalThis.pointerX, globalThis.pointerY);
+    }
+    
+    if (globalThis.joinerIsShooting){
+        shoot(globalThis.player2ShootOriginParticle, globalThis.joinerPointerX, globalThis.joinerPointerY);
     }
 
     applyNewPositions();
@@ -562,9 +599,12 @@ function sendData() {
             bitStream.writeBoolean(isGrey);
         }
     }
-
-    globalThis.otherPeerConnection.send(bitStream.buffer);
-    console.log("HOST | Sent " + bitStream.index / 8 + " bytes");
+    
+    const bitsCount = bitStream.index.valueOf();
+    bitStream.index = 0;
+    let bufferToSend = bitStream.readArrayBuffer(bitsCount / 8 + 1);
+    globalThis.otherPeerConnection.send(bufferToSend);
+    console.log("HOST | Sent " + (bitsCount / 8 + 1) + " bytes");
 }
 
 function draw(interpolationPercentage: number) {

@@ -39,7 +39,7 @@ function onLoaded() {
                 { urls: 'turn:turn.threatfrom.space:3478', username: "guest", credential: "somepassword" }
             ]
         },
-        debug: 3
+        debug: 1
     };
     let urlParams = new URLSearchParams(window.location.search); // impossible to do on itch.io, so either the joining player will play outside itch.io, 
     // or also allow joining by entering invite code
@@ -52,9 +52,10 @@ function onLoaded() {
         });
         peer.on('open', id => {
             console.log("Trying to connect to " + joinId);
-            let conn = peer.connect(joinId, { reliable: true, serialization: "none" }); // TODO: change reliable to false after testing, then make sure DataChannel.ordered is also false
+            let conn = peer.connect(joinId, { reliable: false, serialization: "none" });
+            globalThis.connectionToHost = conn;
             conn.on("open", () => {
-                conn.send("JOINER | conn on open");
+                console.log("JOINER | conn on open " + Date.now());
                 conn.on("data", joinerOnData);
                 setupGameForJoiner();
             });
@@ -70,6 +71,7 @@ function onLoaded() {
         });
         peer.on("open", id => {
             const joinUrl = "https://threatfrom.space?join=" + id;
+            // const joinUrl = "localhost:1234?join=" + id;
             idElement.innerText = joinUrl;
             if (navigator.share) {
                 idElement.addEventListener("click", () => {
@@ -82,6 +84,8 @@ function onLoaded() {
             peer.on("connection", conn => {
                 console.log("HOST | connection callback");
                 globalThis.otherPeerConnection = conn;
+                conn.on("data", hostOnData);
+                console.log("HOST | conn on open " + Date.now());
                 setupGameForHost();
                 // conn.on("data", data => {
                 //     console.log("HOST | Received data: " + data);
@@ -91,56 +95,111 @@ function onLoaded() {
         hostButton.parentNode.removeChild(hostButton);
     });
 }
-function setupGameForJoiner() {
+async function setupGameForJoiner() {
     SetupCanvas();
     SetupInputAndOrientation();
-    globalThis.tick = 1;
+    globalThis.lastAppliedTick = 0;
+    // for more than 2 colors Uint8Array instead of Array<boolean>
+    globalThis.snapshotsBuffer = new Array(3).fill(null).map(() => new Uint8Array(globalThis.particlesColumns * globalThis.particlesRows).fill(255)); // 64kB per slot
+    globalThis.snapshotsExist = new Array(globalThis.snapshotsBuffer.length).fill(false);
+    globalThis.snapshotsTick = new Array(globalThis.snapshotsBuffer).fill(0);
+    globalThis.initialDelay = globalThis.snapshotsBuffer.length + 1;
+    globalThis.dataToSend = new ArrayBuffer(1 + 4 + 4); // isShooting, x, y
+    globalThis.debugLogIndex = 0;
     // TODO: warm up (maybe)
     // can't rely on requestAnimationFrame frame rate, any device can limit it to anything like 50, 30 
     // which means update has to be called multiple times per frame
     const kindaTargetFPS = 30;
+    // await new Promise(r => setTimeout(r, globalThis.snapshotsBuffer.length * 1000 / kindaTargetFPS));
     MainLoop.setUpdate(joinerUpdate).setDraw(draw).setEnd(end).setMaxAllowedFPS(kindaTargetFPS).setSimulationTimestep(1000.0 / kindaTargetFPS).start();
 }
 function joinerUpdate(delta) {
-    const width = globalThis.canvas.width;
-    const height = globalThis.canvas.height;
+    // initial delay
+    if (globalThis.initialDelay > 0) {
+        globalThis.initialDelay--;
+        return;
+    }
+    // console.log(globalThis.debugLogIndex + ";" + 1);
+    globalThis.debugLogIndex++;
+    // find index of pool to use
+    let lowestTickExisting = globalThis.snapshotsTick[0];
+    for (let i = 0; i < globalThis.snapshotsBuffer.length; i++) {
+        if (globalThis.snapshotsExist[i] && globalThis.snapshotsTick[i] < lowestTickExisting) {
+            lowestTickExisting = globalThis.snapshotsTick[i];
+        }
+    }
+    let lowestTickExistingIndex = globalThis.snapshotsTick.indexOf(lowestTickExisting);
+    if (!globalThis.snapshotsExist[lowestTickExistingIndex]) {
+        // no snapshot available, wait
+        console.log("no snapshot available, wait"); // happens more often than expected
+        return;
+    }
+    // console.log("applying snapshot");
+    globalThis.snapshotsExist[lowestTickExistingIndex] = false; // free snapshot pool slot
+    // apply to imageData
     if (!globalThis.imageData)
-        globalThis.imageData = globalThis.ctx.createImageData(width, height);
+        globalThis.imageData = globalThis.ctx.createImageData(globalThis.particlesColumns, globalThis.particlesRows);
     let imageData = globalThis.imageData;
-    globalThis.tick++;
-}
-function joinerOnData(data) {
-    // TODO: buffer incoming data, based on its packet's tick. In joinerUpdate pull relevant tick's packet and apply it to imageData
-    console.log("JOINER | Received data");
-    let bitStream = new BitStream(data);
-    let tick = bitStream.readUint32();
-    let numberOfFilled = 0;
-    let imageData = globalThis.imageData;
-    // TODO: move this from here, no buffering for now
     for (let i = 0; i < imageData.data.length; i += 4) {
         imageData.data[i + 0] = 255; // R value
         imageData.data[i + 1] = 255; // G value
         imageData.data[i + 2] = 255; // B value
         imageData.data[i + 3] = 255; // A value
     }
-    for (let i = 0; i < imageData.data.length; i += 4) {
-        let filled = bitStream.readBoolean();
-        if (filled) {
-            imageData.data[i] = 0;
-            imageData.data[i + 1] = 0;
-            imageData.data[i + 2] = 0;
-            numberOfFilled++;
-        }
+    for (let i = 0; i < globalThis.snapshotsBuffer[lowestTickExistingIndex].length; i++) {
+        let imageDataBaseIndex = i * 4;
+        let color = globalThis.snapshotsBuffer[lowestTickExistingIndex][i];
+        imageData.data[imageDataBaseIndex] = color;
+        imageData.data[imageDataBaseIndex + 1] = color;
+        imageData.data[imageDataBaseIndex + 2] = color;
     }
     globalThis.imageData = imageData;
-    console.log("JOINER | Received " + numberOfFilled + " filled pixels");
+    sendInput();
+}
+function joinerOnData(data) {
+    // console.log(globalThis.debugLogIndex + ";" + 0);
+    globalThis.debugLogIndex++;
+    let bitStream = new BitStream(data);
+    // console.log("JOINER | Received " + bitStream.length / 8 + " bytes");
+    let tick = bitStream.readUint32();
+    // find index of buffer to use
+    let poolIndex = globalThis.snapshotsExist.indexOf(false);
+    if (poolIndex === -1) { // no free slot in snapshot pool, find slot with lowest tick instead. Happens more often than expected, as often as "no snapshot available"
+        // think hard about this, could cause more frame drops than necessary
+        console.log("no free slot in snapshot pool, find slot with lowest tick instead");
+        poolIndex = globalThis.snapshotsTick.indexOf(Math.min(...globalThis.snapshotsTick));
+        // } else console.log("found free slot in snapshot pool");
+    }
+    globalThis.snapshotsTick[poolIndex] = tick;
+    globalThis.snapshotsExist[poolIndex] = true;
+    for (let i = 0; i < globalThis.snapshotsBuffer[poolIndex].length; i++) {
+        let filled = bitStream.readBoolean();
+        let color = filled ? 0 : 255;
+        if (filled)
+            color = bitStream.readBoolean() ? 70 : 0;
+        globalThis.snapshotsBuffer[poolIndex][i] = color;
+    }
+}
+function sendInput() {
+    let bitStream = new BitStream(globalThis.dataToSend);
+    bitStream.writeBoolean(globalThis.isShooting);
+    bitStream.writeFloat32(globalThis.pointerX);
+    bitStream.writeFloat32(globalThis.pointerY);
+    globalThis.connectionToHost.send(bitStream.buffer);
+}
+function hostOnData(data) {
+    let bitStream = new BitStream(data);
+    globalThis.joinerIsShooting = bitStream.readBoolean();
+    globalThis.joinerPointerX = bitStream.readFloat32();
+    globalThis.joinerPointerY = bitStream.readFloat32();
 }
 function SetupPlanet(planetRadius) {
     for (let i = 0; i < globalThis.initialParticlesCount; i++) {
         let x = Math.floor(i % globalThis.particlesColumns); // why floor?
         let y = Math.floor(i / globalThis.particlesColumns);
         if (isPointInCircle(x, y, globalThis.planetCenterX, globalThis.planetCenterY, planetRadius) ||
-            (x > globalThis.planetCenterX - 2 && x < globalThis.planetCenterX + 2 && y > globalThis.planetCenterY - planetRadius - 6 && y < globalThis.planetCenterY)) {
+            (x > globalThis.planetCenterX - 2 && x < globalThis.planetCenterX + 2 && y > globalThis.planetCenterY - planetRadius - 6 && y < globalThis.planetCenterY) ||
+            (x > globalThis.planetCenterX - 2 && x < globalThis.planetCenterX + 2 && y > globalThis.planetCenterY && y < globalThis.planetCenterY + planetRadius + 6)) {
             globalThis.particlesAlive[i] = true;
             // globalThis.particlesVelocitiesX[i] = 1.0;
             globalThis.particlesPositionsX[i] = x;
@@ -149,6 +208,10 @@ function SetupPlanet(planetRadius) {
             if (x === globalThis.planetCenterX && y === globalThis.planetCenterY - planetRadius - 5) {
                 globalThis.player1ShootOriginParticle = i;
                 console.log("player1ShootOriginParticle: " + x + " " + y);
+            }
+            if (x === globalThis.planetCenterX && y === globalThis.planetCenterY + planetRadius + 5) {
+                globalThis.player2ShootOriginParticle = i;
+                console.log("player2ShootOriginParticle: " + x + " " + y);
             }
         }
     }
@@ -171,7 +234,8 @@ function setupGameForHost() {
     globalThis.previousBulletId = 0;
     globalThis.player1ShootOriginParticle = -1;
     globalThis.player1LastShotTime = 0;
-    globalThis.dataToSend = new ArrayBuffer(4 /*tick*/ + (globalThis.particlesColumns * globalThis.particlesRows) / 8); // because 8 bools in a byte
+    // because 8 bools in a byte, *2 because at worse case every particle is grey so takes 2 bits
+    globalThis.dataToSend = new ArrayBuffer(4 /*tick*/ + (globalThis.particlesColumns * globalThis.particlesRows) / 8 * 2);
     // max 4 particles per collision cell
     globalThis.particleCollisionLookup = new Array(globalThis.particlesColumns * globalThis.particlesRows).fill(null).map(i => new Int32Array(4));
     globalThis.particleCollisionLookup.forEach(cell => cell.fill(-1));
@@ -180,7 +244,6 @@ function setupGameForHost() {
     globalThis.planetCenterY = 100;
     const planetRadius = 40;
     SetupPlanet(planetRadius);
-    // await sleep(1000);
     globalThis.tick = 1;
     // TODO: warm up (maybe)
     // can't rely on requestAnimationFrame frame rate, any device can limit it to anything like 50, 30 
@@ -292,15 +355,21 @@ function handleCollisions() {
         // check if player died
         if (!globalThis.particlesAlive[globalThis.player1ShootOriginParticle] && !globalThis.player1Dead) {
             globalThis.player1Dead = true;
-            if (window.confirm("YOU DIED. Try again?"))
+            console.log("Destroyed player1 shoot origin!");
+        }
+        if (!globalThis.particlesAlive[globalThis.player2ShootOriginParticle] && !globalThis.player2Dead) {
+            globalThis.player2Dead = true;
+            console.log("Destroyed player2 shoot origin!");
+        }
+        if (globalThis.player1Dead && globalThis.player2Dead) {
+            if (window.confirm("YOU BOTH DIED. Try again?"))
                 window.location.reload();
-            console.log("Destroyed shoot origin!");
         }
     }
 }
-function shoot() {
-    let shootOriginX = globalThis.particlesPositionsX[globalThis.player1ShootOriginParticle];
-    let shootOriginY = globalThis.particlesPositionsY[globalThis.player1ShootOriginParticle];
+function shoot(shootOriginParticle, pointerX, pointerY) {
+    let shootOriginX = globalThis.particlesPositionsX[shootOriginParticle];
+    let shootOriginY = globalThis.particlesPositionsY[shootOriginParticle];
     let originOk = true;
     if (shootOriginX === 0 && shootOriginY === 0 || !globalThis.particlesAlive[globalThis.player1ShootOriginParticle]) {
         console.log("shoot origin particle is dead or something, can't shoot");
@@ -313,11 +382,11 @@ function shoot() {
         shootOriginXRelToPlanetCenter = shootOriginXRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
         shootOriginYRelToPlanetCenter = shootOriginYRelToPlanetCenter / shootOriginRelToPlanetCenterLength;
         // console.log("shootOriginX: " + shootOriginX + " shootOriginY: " + shootOriginY);
-        let perfectVelocityX = globalThis.pointerX - shootOriginX;
+        let perfectVelocityX = pointerX - shootOriginX;
         if (isNaN(perfectVelocityX)) {
             throw new Error("NaN");
         }
-        let perfectVelocityY = globalThis.pointerY - shootOriginY;
+        let perfectVelocityY = pointerY - shootOriginY;
         let directionOk = true;
         let dotProduct = (perfectVelocityX * shootOriginXRelToPlanetCenter) + (perfectVelocityY * shootOriginYRelToPlanetCenter);
         if (dotProduct < -0.1) {
@@ -407,7 +476,10 @@ function update(delta) {
     }
     // shoot
     if (globalThis.isShooting) {
-        shoot();
+        shoot(globalThis.player1ShootOriginParticle, globalThis.pointerX, globalThis.pointerY);
+    }
+    if (globalThis.joinerIsShooting) {
+        shoot(globalThis.player2ShootOriginParticle, globalThis.joinerPointerX, globalThis.joinerPointerY);
     }
     applyNewPositions();
     fillImageData();
@@ -422,16 +494,20 @@ function update(delta) {
 function sendData() {
     let bitStream = new BitStream(globalThis.dataToSend);
     const imageData = globalThis.imageData;
-    let numberOfFilled = 0;
     bitStream.writeUint32(globalThis.tick);
     for (let i = 0; i < imageData.data.length; i += 4) {
         let filled = imageData.data[i] !== 255;
         bitStream.writeBoolean(filled);
-        if (filled)
-            numberOfFilled++;
+        if (filled) {
+            let isGrey = imageData.data[i] !== 0;
+            bitStream.writeBoolean(isGrey);
+        }
     }
-    globalThis.otherPeerConnection.send(bitStream.buffer);
-    console.log("HOST | Sent " + numberOfFilled + " filled pixels");
+    const bitsCount = bitStream.index.valueOf();
+    bitStream.index = 0;
+    let bufferToSend = bitStream.readArrayBuffer(bitsCount / 8 + 1);
+    globalThis.otherPeerConnection.send(bufferToSend);
+    console.log("HOST | Sent " + (bitsCount / 8 + 1) + " bytes");
 }
 function draw(interpolationPercentage) {
     if (globalThis.imageData)
